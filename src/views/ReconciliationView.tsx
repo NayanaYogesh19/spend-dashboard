@@ -1,0 +1,567 @@
+import React, { useState } from 'react';
+import { ReconciliationPeriod, BankTransaction, SubscriptionRecord, PurchaseRecord, AdSpendRecord, MerchantAlias, CardType, BankTransactionType } from '../types';
+import { FileSpreadsheet, Plus, Upload, Search, CheckCircle2, AlertCircle, Clock, Link as LinkIcon } from 'lucide-react';
+
+interface Props {
+  periods: ReconciliationPeriod[];
+  bankTransactions: BankTransaction[];
+  subscriptions: SubscriptionRecord[];
+  purchases: PurchaseRecord[];
+  adSpends: AdSpendRecord[];
+  merchantAliases: MerchantAlias[];
+  onAddPeriod: (name: string, card: CardType) => string;
+  onImport: (periodId: string, txns: Omit<BankTransaction, 'id' | 'periodId'>[]) => void;
+  onUpdateTransaction: (id: string, updates: Partial<BankTransaction>) => void;
+  onAddAlias: (alias: Omit<MerchantAlias, 'id'>) => void;
+}
+
+export default function ReconciliationView({ 
+  periods, bankTransactions, subscriptions, purchases, adSpends, merchantAliases,
+  onAddPeriod, onImport, onUpdateTransaction, onAddAlias 
+}: Props) {
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(periods[0]?.id || null);
+  const [showAddPeriod, setShowAddPeriod] = useState(false);
+  const [newPeriodName, setNewPeriodName] = useState('');
+  const [newPeriodCard, setNewPeriodCard] = useState<CardType>('Internal Card');
+  
+  const [rawImportData, setRawImportData] = useState('');
+  const [showImport, setShowImport] = useState(false);
+  const [selectedTxnId, setSelectedTxnId] = useState<string | null>(null);
+
+  const selectedPeriod = periods.find(p => p.id === selectedPeriodId);
+  const currentTransactions = bankTransactions.filter(t => t.periodId === selectedPeriodId);
+  const selectedTxn = currentTransactions.find(t => t.id === selectedTxnId);
+
+  const handleCreatePeriod = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPeriodName) {
+      const id = onAddPeriod(newPeriodName, newPeriodCard);
+      setSelectedPeriodId(id);
+      setShowAddPeriod(false);
+      setNewPeriodName('');
+    }
+  };
+
+  // 1. Parsing Logic
+  const handleImport = () => {
+    if (!rawImportData.trim() || !selectedPeriodId) return;
+
+    const lines = rawImportData.trim().split('\n');
+    const newTxns: Omit<BankTransaction, 'id' | 'periodId'>[] = [];
+    
+    // Header pattern mapping (Date, Sr.No., Transaction Details, Reward Point Header, Intl.Amount, Amount(in Rs))
+    lines.forEach(line => {
+      const cols = line.split('\t');
+      if (cols.length >= 6) {
+        const [date, srNo, desc, reward, intlStr, inrStr] = cols;
+        
+        // Skip header row
+        if (date.toLowerCase().includes('date') && desc.toLowerCase().includes('transaction')) return;
+
+        // Check if it's a card header row (masked card)
+        const isHeaderRow = /XXXX.*XXXX/.test(desc) || /4102[X\*]+0007/.test(desc);
+        
+        let type: BankTransactionType = 'Merchant';
+        if (isHeaderRow) {
+          type = 'Header';
+        } else if (desc.toLowerCase().includes('dcc fee')) {
+          type = 'Fee';
+        } else if (desc.toLowerCase().includes('igst')) {
+          type = 'Tax';
+        }
+
+        const intlAmount = parseFloat(intlStr.replace(/[^0-9.-]+/g, '')) || 0;
+        const inrAmount = parseFloat(inrStr.replace(/[^0-9.-]+/g, '')) || 0;
+
+        // Try Merchant Normalization
+        let normalizedVendor = undefined;
+        let matchedAlias = merchantAliases.find(a => desc.toUpperCase().includes(a.pattern.toUpperCase()));
+        
+        // Simple built-in aliases for demo
+        if (!matchedAlias) {
+           if (desc.includes('DIGITALOCEAN')) normalizedVendor = 'DigitalOcean';
+           else if (desc.includes('OPENAI') || desc.includes('CHATGPT')) normalizedVendor = 'OpenAI';
+           else if (desc.includes('ADOBE')) normalizedVendor = 'Adobe';
+           else if (desc.includes('WAALAXY')) normalizedVendor = 'Waalaxy';
+           else if (desc.toUpperCase().includes('CLAUDE') || desc.toUpperCase().includes('ANTHROPIC')) normalizedVendor = 'Anthropic (Claude)';
+        } else {
+           normalizedVendor = matchedAlias.normalizedVendor;
+        }
+
+        newTxns.push({
+          originalDate: date.trim(),
+          serialNumber: srNo.trim(),
+          originalDescription: desc.trim(),
+          rewardPoints: reward.trim(),
+          intlAmount,
+          inrAmount,
+          type,
+          normalizedVendor,
+          status: 'Unidentified' // We will run matching below
+        });
+      }
+    });
+
+    // 2. Matching Engine
+    const processedTxns = newTxns.map((txn, index, arr) => {
+      if (txn.type === 'Header') return { ...txn, status: 'Associated' as const };
+      
+      // Attempt to associate Fees and Taxes with previous Merchant transaction
+      if (txn.type === 'Fee' || txn.type === 'Tax') {
+        const prevMerchant = arr.slice(0, index).reverse().find(t => t.type === 'Merchant');
+        if (prevMerchant) {
+           return { ...txn, status: 'Associated' as const, parentTransactionId: 'pending' }; // will fix parent in real db
+        }
+      }
+
+      if (txn.type !== 'Merchant') return txn;
+
+      let bestMatch: any = null;
+      let maxConfidence = 0;
+      let matchType = '';
+      let matchReasons: string[] = [];
+
+      const vendor = txn.normalizedVendor || txn.originalDescription;
+
+      // Priority 1: Exact INR Amount + Vendor Match (from one-time or subscription)
+      const exactInrPurchase = purchases.find(p => 
+        (p.actualBankInrAmount === txn.inrAmount) && 
+        ((p.vendor && p.vendor.toLowerCase() === txn.normalizedVendor?.toLowerCase()) || (p.vendor && txn.originalDescription.toLowerCase().includes(p.vendor.toLowerCase())))
+      );
+
+      if (exactInrPurchase) {
+        return {
+          ...txn,
+          suggestedPurchaseId: exactInrPurchase.purchaseId,
+          suggestedVendor: exactInrPurchase.vendor,
+          suggestedClient: exactInrPurchase.client,
+          suggestedEmployee: exactInrPurchase.employee,
+          suggestedPod: exactInrPurchase.pod,
+          confidence: 99,
+          confidenceLevel: 'High' as const,
+          confidenceReasons: ['Exact Actual Bank INR Amount matched', 'Vendor matched'],
+          status: 'Matched' as const
+        };
+      }
+
+      // Priority 2: Exact Vendor Amount + Vendor Match
+      const exactVendorAmtPurchase = purchases.find(p => 
+        (p.actualAmount === txn.intlAmount || p.actualAmount === txn.inrAmount) && 
+        ((p.vendor && p.vendor.toLowerCase() === txn.normalizedVendor?.toLowerCase()) || (p.vendor && txn.originalDescription.toLowerCase().includes(p.vendor.toLowerCase())))
+      );
+
+      if (exactVendorAmtPurchase) {
+         return {
+          ...txn,
+          suggestedPurchaseId: exactVendorAmtPurchase.purchaseId,
+          suggestedVendor: exactVendorAmtPurchase.vendor,
+          suggestedClient: exactVendorAmtPurchase.client,
+          suggestedEmployee: exactVendorAmtPurchase.employee,
+          suggestedPod: exactVendorAmtPurchase.pod,
+          confidence: 90,
+          confidenceLevel: 'High' as const,
+          confidenceReasons: ['Actual Vendor Amount matched', 'Vendor matched'],
+          status: 'Matched' as const
+        };
+      }
+
+      // Priority 3: Subscription Master
+      if (txn.normalizedVendor) {
+        const matchingSubs = subscriptions.filter(s => 
+          s.vendor && s.vendor.toLowerCase() === txn.normalizedVendor!.toLowerCase() && 
+          s.status === 'Active'
+        );
+
+        if (matchingSubs.length === 1) {
+          const sub = matchingSubs[0];
+          
+          const inrMatch = sub.actualBankInrAmount && Math.abs(txn.inrAmount - sub.actualBankInrAmount) < 5;
+          const intlMatch = txn.intlAmount > 0 && Math.abs(txn.intlAmount - sub.expectedRecurringAmount) < 5;
+          
+          if (inrMatch || intlMatch) {
+             return {
+               ...txn,
+               suggestedSubscriptionId: sub.subscriptionId,
+               suggestedVendor: sub.vendor,
+               suggestedClient: sub.client,
+               suggestedEmployee: sub.employeeOwner,
+               suggestedPod: sub.pod,
+               confidence: 95,
+               confidenceLevel: 'High' as const,
+               confidenceReasons: ['Merchant matched', 'Active subscription found', 'Amount matched'],
+               status: 'Matched' as const
+             };
+          } else {
+             return {
+               ...txn,
+               suggestedSubscriptionId: sub.subscriptionId,
+               confidence: 70,
+               confidenceLevel: 'Medium' as const,
+               confidenceReasons: ['Merchant matched', 'Active subscription found', 'Amount variance detected'],
+               status: 'Review' as const
+             };
+          }
+        } else if (matchingSubs.length > 1) {
+           return {
+             ...txn,
+             confidence: 50,
+             confidenceLevel: 'Low' as const,
+             confidenceReasons: ['Merchant matched', 'Multiple active subscriptions found'],
+             status: 'Possible Multiple Matches' as const
+           };
+        }
+      }
+
+      return txn;
+    });
+
+    if (processedTxns.length === 0) {
+      alert("No valid transactions found. Please ensure you are pasting directly from the Excel/CSV statement with at least 6 columns per row (Date, SrNo, Description, Reward, IntlAmount, INRAmount).");
+      return;
+    }
+
+    onImport(selectedPeriodId, processedTxns);
+    setShowImport(false);
+    setRawImportData('');
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">Reconciliation</h2>
+          <p className="text-slate-500">Import and reconcile monthly credit card statements.</p>
+        </div>
+        
+        <div className="flex gap-4 items-center">
+          <select 
+            value={selectedPeriodId || ''} 
+            onChange={(e) => setSelectedPeriodId(e.target.value)}
+            className="px-4 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+          >
+            {periods.length === 0 && <option value="">No periods found</option>}
+            {periods.map(p => (
+              <option key={p.id} value={p.id}>{p.name} ({p.card})</option>
+            ))}
+          </select>
+          <button 
+            onClick={() => setShowAddPeriod(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            New Period
+          </button>
+        </div>
+      </div>
+
+      {showAddPeriod && (
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm mb-6">
+          <h3 className="font-semibold text-slate-900 mb-4">Create Reconciliation Period</h3>
+          <form onSubmit={handleCreatePeriod} className="flex gap-4 items-end">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Period Name</label>
+              <input 
+                type="text" 
+                placeholder="e.g. May 2026"
+                value={newPeriodName}
+                onChange={e => setNewPeriodName(e.target.value)}
+                className="w-64 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Card</label>
+              <select 
+                value={newPeriodCard}
+                onChange={e => setNewPeriodCard(e.target.value as CardType)}
+                className="w-48 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="Internal Card">Internal Card</option>
+                <option value="Client Card">Client Card</option>
+              </select>
+            </div>
+            <button type="submit" className="px-6 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors">
+              Create
+            </button>
+            <button type="button" onClick={() => setShowAddPeriod(false)} className="px-4 py-2 text-slate-600 hover:text-slate-800 font-medium">
+              Cancel
+            </button>
+          </form>
+        </div>
+      )}
+
+      {selectedPeriod && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="px-6 py-5 border-b border-slate-200 flex justify-between items-center bg-slate-50/50">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">{selectedPeriod.name}</h3>
+              <p className="text-sm text-slate-500">{selectedPeriod.card} • {currentTransactions.length} Transactions</p>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setShowImport(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors"
+              >
+                <Upload className="w-4 h-4" />
+                Import Statement
+              </button>
+            </div>
+          </div>
+
+          {showImport && (
+            <div className="p-6 border-b border-slate-200 bg-blue-50/30">
+              <h4 className="font-medium text-slate-900 mb-2">Paste Bank Statement Data</h4>
+              <p className="text-sm text-slate-500 mb-4">Copy and paste rows from Excel/CSV (Date, Sr.No., Details, Reward, Intl.Amount, Amount(in Rs))</p>
+              <textarea
+                value={rawImportData}
+                onChange={e => setRawImportData(e.target.value)}
+                className="w-full h-48 p-3 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="01/05/2026	13339439344	DIGITALOCEAN.COM AMSTERDAM NL*	29	31.36	3113.46..."
+              />
+              <div className="mt-4 flex gap-3">
+                <button onClick={handleImport} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+                  Process Data
+                </button>
+                <button onClick={() => setShowImport(false)} className="px-4 py-2 text-slate-600 hover:text-slate-800 text-sm font-medium">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {currentTransactions.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                    <th className="p-4 border-b font-medium">Date</th>
+                    <th className="p-4 border-b font-medium w-1/4">Bank Description</th>
+                    <th className="p-4 border-b font-medium text-right">Amount</th>
+                    <th className="p-4 border-b font-medium">Vendor</th>
+                    <th className="p-4 border-b font-medium">Suggested Match</th>
+                    <th className="p-4 border-b font-medium">Type</th>
+                    <th className="p-4 border-b font-medium">Confidence</th>
+                    <th className="p-4 border-b font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {currentTransactions.map(txn => (
+                    <tr key={txn.id} onClick={() => setSelectedTxnId(txn.id)} className={`hover:bg-slate-50 group cursor-pointer transition-colors ${selectedTxnId === txn.id ? 'bg-blue-50/50' : ''}`}>
+                      <td className="p-4 text-sm text-slate-700 whitespace-nowrap">{txn.originalDate}</td>
+                      <td className="p-4 text-sm">
+                        <div className="text-slate-900 font-medium truncate max-w-xs" title={txn.originalDescription}>
+                          {txn.originalDescription}
+                        </div>
+                        <div className="text-xs text-slate-400 mt-0.5">{txn.serialNumber}</div>
+                      </td>
+                      <td className="p-4 text-sm text-right font-medium text-slate-900">
+                        {txn.inrAmount > 0 ? `₹${txn.inrAmount.toLocaleString()}` : '-'}
+                        {txn.intlAmount > 0 && <div className="text-xs text-slate-400 font-normal mt-0.5">USD {txn.intlAmount}</div>}
+                      </td>
+                      <td className="p-4 text-sm text-slate-700">
+                        {txn.normalizedVendor || <span className="text-slate-400 italic">Unknown</span>}
+                      </td>
+                      <td className="p-4 text-sm text-slate-700">
+                        {txn.suggestedSubscriptionId || txn.suggestedPurchaseId ? (
+                          <div>
+                            <div className="font-medium text-slate-900">{txn.suggestedSubscriptionId || txn.suggestedPurchaseId}</div>
+                            <div className="text-[11px] text-slate-500 mt-0.5 whitespace-nowrap">
+                              {txn.suggestedPod || txn.suggestedClient || 'Internal'} • {txn.suggestedEmployee}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400">-</span>
+                        )}
+                      </td>
+                      <td className="p-4">
+                        <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium
+                          ${txn.type === 'Merchant' ? 'bg-blue-50 text-blue-700' :
+                            txn.type === 'Fee' ? 'bg-orange-50 text-orange-700' :
+                            txn.type === 'Tax' ? 'bg-purple-50 text-purple-700' :
+                            'bg-slate-100 text-slate-700'
+                          }`}>
+                          {txn.type}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        {txn.confidenceLevel ? (
+                          <div className="flex items-center gap-1.5">
+                            <div className={`w-2 h-2 rounded-full ${
+                              txn.confidenceLevel === 'High' ? 'bg-emerald-500' :
+                              txn.confidenceLevel === 'Medium' ? 'bg-yellow-500' : 'bg-red-500'
+                            }`} />
+                            <span className="text-sm font-medium text-slate-700">{txn.confidence}%</span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 text-sm">-</span>
+                        )}
+                      </td>
+                      <td className="p-4">
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border
+                          ${txn.status === 'Matched' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            txn.status === 'Review' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
+                            txn.status === 'Associated' ? 'bg-slate-100 text-slate-700 border-slate-200' :
+                            'bg-red-50 text-red-700 border-red-200'
+                          }`}>
+                          {txn.status === 'Matched' && <CheckCircle2 className="w-3.5 h-3.5" />}
+                          {txn.status === 'Review' && <Clock className="w-3.5 h-3.5" />}
+                          {txn.status === 'Associated' && <LinkIcon className="w-3.5 h-3.5" />}
+                          {txn.status === 'Unidentified' && <AlertCircle className="w-3.5 h-3.5" />}
+                          {txn.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="p-12 text-center">
+              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <FileSpreadsheet className="w-8 h-8 text-slate-400" />
+              </div>
+              <h4 className="text-lg font-medium text-slate-900 mb-1">No Transactions</h4>
+              <p className="text-slate-500 max-w-sm mx-auto">
+                Import a bank statement to begin the reconciliation process for this period.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {selectedTxn && (
+        <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm flex justify-end z-50">
+          <div className="w-[500px] bg-white h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+            <div className="p-6 border-b border-slate-200 flex justify-between items-start">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">Transaction Details</h3>
+                <p className="text-sm text-slate-500">Ref: {selectedTxn.serialNumber}</p>
+              </div>
+              <button onClick={() => setSelectedTxnId(null)} className="text-slate-400 hover:text-slate-600">
+                ×
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6 space-y-8">
+              {/* Bank Info */}
+              <section>
+                <h4 className="text-sm font-semibold text-slate-900 mb-4 uppercase tracking-wider">Bank Information</h4>
+                <div className="bg-slate-50 rounded-lg p-4 border border-slate-200 space-y-3">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-xs text-slate-500">Date</div>
+                      <div className="text-sm font-medium text-slate-900">{selectedTxn.originalDate}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500">Card Cost (INR)</div>
+                      <div className="text-sm font-medium text-slate-900">₹{selectedTxn.inrAmount.toLocaleString()}</div>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Original Description</div>
+                    <div className="text-sm font-medium text-slate-900 font-mono mt-1">{selectedTxn.originalDescription}</div>
+                  </div>
+                  {selectedTxn.intlAmount > 0 && (
+                    <div>
+                      <div className="text-xs text-slate-500">International Amount</div>
+                      <div className="text-sm font-medium text-slate-900">USD {selectedTxn.intlAmount}</div>
+                    </div>
+                  )}
+                  {selectedTxn.type === 'Fee' || selectedTxn.type === 'Tax' ? (
+                    <div className="pt-2 border-t border-slate-200">
+                      <span className="inline-flex items-center px-2 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded">
+                        {selectedTxn.type}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+
+              {/* Match Info */}
+              {selectedTxn.type === 'Merchant' && (
+                <section>
+                  <h4 className="text-sm font-semibold text-slate-900 mb-4 uppercase tracking-wider">Suggested Business Match</h4>
+                  
+                  {selectedTxn.status === 'Matched' || selectedTxn.status === 'Review' ? (
+                    <div className={`rounded-lg p-4 border ${selectedTxn.status === 'Matched' ? 'bg-emerald-50/50 border-emerald-200' : 'bg-yellow-50/50 border-yellow-200'} space-y-4`}>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">
+                            {selectedTxn.suggestedSubscriptionId || selectedTxn.suggestedPurchaseId || selectedTxn.normalizedVendor}
+                          </div>
+                          <div className="text-xs text-slate-600 mt-1">
+                            Account/Pod: {selectedTxn.suggestedPod || selectedTxn.suggestedClient || 'Internal'} • Purchaser: {selectedTxn.suggestedEmployee}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${selectedTxn.confidenceLevel === 'High' ? 'bg-emerald-100 text-emerald-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                            {selectedTxn.confidence}% Match
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {selectedTxn.confidenceReasons && (
+                        <div className="pt-3 border-t border-slate-200/60">
+                          <div className="text-xs font-medium text-slate-700 mb-2">Confidence Reasons:</div>
+                          <ul className="space-y-1">
+                            {selectedTxn.confidenceReasons.map((r, i) => (
+                              <li key={i} className="text-xs text-slate-600 flex items-start gap-1.5">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                                {r}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bg-slate-50 border border-slate-200 border-dashed rounded-lg p-6 text-center">
+                      <AlertCircle className="w-6 h-6 text-slate-400 mx-auto mb-2" />
+                      <div className="text-sm font-medium text-slate-900">No Match Found</div>
+                      <div className="text-xs text-slate-500 mt-1">Manual resolution required</div>
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {/* Actions */}
+              <section>
+                <h4 className="text-sm font-semibold text-slate-900 mb-4 uppercase tracking-wider">Action</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <button 
+                    onClick={() => {
+                      onUpdateTransaction(selectedTxn.id, { status: 'Matched', confidenceLevel: 'High', confidence: 100 });
+                      setSelectedTxnId(null);
+                    }}
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors"
+                  >
+                    Confirm Match
+                  </button>
+                  <button 
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
+                  >
+                    Change Match
+                  </button>
+                  <button 
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
+                  >
+                    Assign to Employee
+                  </button>
+                  <button 
+                    onClick={() => {
+                      onUpdateTransaction(selectedTxn.id, { status: 'Unidentified', confidenceLevel: 'Low', confidence: 0, suggestedSubscriptionId: undefined, suggestedPurchaseId: undefined });
+                      setSelectedTxnId(null);
+                    }}
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
+                  >
+                    Mark Unidentified
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
