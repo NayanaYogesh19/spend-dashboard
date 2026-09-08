@@ -11,7 +11,7 @@ import { CreditCard, Users, ShieldCheck, Wallet, Database, FileSpreadsheet, BarC
 type Role = 'Employee' | 'Manager' | 'Finance' | 'Registers' | 'Reconciliation' | 'Dashboard';
 
 export default function App() {
-  const { requests, purchases, subscriptions, adSpends, periods, bankTransactions, merchantAliases, auditLogs, addRequest, updateRequestStatus, processPurchase, processSubscription, processAdSpend, completePurchase, updateBankAmount, addReconciliationPeriod, importBankTransactions, updateBankTransaction, addMerchantAlias, closePeriod, toggleFeeBillable } = useStore();
+  const { requests, purchases, subscriptions, adSpends, periods, bankTransactions, merchantAliases, auditLogs, addRequest, updateRequestStatus, processPurchase, processSubscription, processAdSpend, completePurchase, updateBankAmount, addReconciliationPeriod, importBankTransactions, updateBankTransaction, confirmTransactionMatch, addImportedSubscription, updateSubscription, addMerchantAlias, closePeriod, toggleFeeBillable } = useStore();
   const [activeRole, setActiveRole] = useState<Role>('Dashboard');
 
   const navItems: { role: Role; icon: React.ReactNode; label: string; desc: string }[] = [
@@ -76,7 +76,13 @@ export default function App() {
           {activeRole === 'Employee' && <EmployeeView requests={requests} onAddRequest={addRequest} onCompletePurchase={completePurchase} />}
           {activeRole === 'Manager' && <ManagerView requests={requests} onUpdateStatus={updateRequestStatus} />}
           {activeRole === 'Finance' && <FinanceView requests={requests} onUpdateStatus={updateRequestStatus} onUpdateBankAmount={updateBankAmount} />}
-          {activeRole === 'Registers' && <RegistersView purchases={purchases} subscriptions={subscriptions} adSpends={adSpends} />}
+          {activeRole === 'Registers' && <RegistersView
+            purchases={purchases}
+            subscriptions={subscriptions}
+            adSpends={adSpends}
+            onAddImportedSubscription={addImportedSubscription}
+            onUpdateSubscription={updateSubscription}
+          />}
           {activeRole === 'Dashboard' && <DashboardView 
             periods={periods}
             bankTransactions={bankTransactions}
@@ -97,6 +103,7 @@ export default function App() {
             onAddPeriod={addReconciliationPeriod}
             onImport={importBankTransactions}
             onUpdateTransaction={updateBankTransaction}
+            onConfirmMatch={confirmTransactionMatch}
             onAddAlias={addMerchantAlias}
           />}
         </div>

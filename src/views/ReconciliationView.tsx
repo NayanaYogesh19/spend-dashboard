@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ReconciliationPeriod, BankTransaction, SubscriptionRecord, PurchaseRecord, AdSpendRecord, MerchantAlias, CardType, BankTransactionType } from '../types';
 import { FileSpreadsheet, Plus, Upload, Search, CheckCircle2, AlertCircle, Clock, Link as LinkIcon } from 'lucide-react';
+import { vendorsLooselyMatch, isAmountWithinTolerance, parseBankDate, parseISODate, isWithinBillingWindow } from '../utils/recurringMatch';
 
 interface Props {
   periods: ReconciliationPeriod[];
@@ -12,12 +13,13 @@ interface Props {
   onAddPeriod: (name: string, card: CardType) => string;
   onImport: (periodId: string, txns: Omit<BankTransaction, 'id' | 'periodId'>[]) => void;
   onUpdateTransaction: (id: string, updates: Partial<BankTransaction>) => void;
+  onConfirmMatch: (transactionId: string) => void;
   onAddAlias: (alias: Omit<MerchantAlias, 'id'>) => void;
 }
 
-export default function ReconciliationView({ 
+export default function ReconciliationView({
   periods, bankTransactions, subscriptions, purchases, adSpends, merchantAliases,
-  onAddPeriod, onImport, onUpdateTransaction, onAddAlias 
+  onAddPeriod, onImport, onUpdateTransaction, onConfirmMatch, onAddAlias
 }: Props) {
   const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(periods[0]?.id || null);
   const [showAddPeriod, setShowAddPeriod] = useState(false);
@@ -116,16 +118,80 @@ export default function ReconciliationView({
 
       if (txn.type !== 'Merchant') return txn;
 
-      let bestMatch: any = null;
-      let maxConfidence = 0;
-      let matchType = '';
-      let matchReasons: string[] = [];
+      // Priority 1: Recurring Subscription Match — checked before one-time purchase
+      // matching so an active subscription's next billing cycle is recognized even
+      // when the transaction date doesn't line up with the original request date.
+      const activeSubs = subscriptions.filter(s => s.status === 'Active');
+      const vendorMatchingSubs = activeSubs.filter(s => vendorsLooselyMatch(s.vendor, txn.originalDescription));
 
-      const vendor = txn.normalizedVendor || txn.originalDescription;
+      if (vendorMatchingSubs.length === 1) {
+        const sub = vendorMatchingSubs[0];
 
-      // Priority 1: Exact INR Amount + Vendor Match (from one-time or subscription)
-      const exactInrPurchase = purchases.find(p => 
-        (p.actualBankInrAmount === txn.inrAmount) && 
+        const intlAmountMatch = txn.intlAmount > 0 && isAmountWithinTolerance(txn.intlAmount, sub.expectedRecurringAmount, 0.05);
+        const inrAmountMatch = !!sub.actualBankInrAmount && txn.inrAmount > 0 && isAmountWithinTolerance(txn.inrAmount, sub.actualBankInrAmount, 0.05);
+        const amountMatch = intlAmountMatch || inrAmountMatch;
+
+        const referenceDate = parseISODate(sub.lastChargedDate || sub.startDate);
+        const txnDate = parseBankDate(txn.originalDate);
+        const dateMatch = !!referenceDate && !!txnDate && isWithinBillingWindow(txnDate, referenceDate, sub.billingFrequency, 7);
+
+        if (amountMatch && dateMatch) {
+          return {
+            ...txn,
+            normalizedVendor: txn.normalizedVendor || sub.vendor,
+            suggestedSubscriptionId: sub.subscriptionId,
+            suggestedVendor: sub.vendor,
+            suggestedClient: sub.client,
+            suggestedEmployee: sub.employeeOwner,
+            suggestedPod: sub.pod,
+            matchType: 'Recurring Subscription' as const,
+            confidence: 97,
+            confidenceLevel: 'High' as const,
+            confidenceReasons: ['Recurring monthly payment detected', 'Vendor matched active subscription', 'Amount within 5% tolerance', 'Within expected billing cycle window'],
+            status: 'Matched' as const
+          };
+        }
+
+        if (amountMatch) {
+          return {
+            ...txn,
+            normalizedVendor: txn.normalizedVendor || sub.vendor,
+            suggestedSubscriptionId: sub.subscriptionId,
+            suggestedVendor: sub.vendor,
+            suggestedClient: sub.client,
+            suggestedEmployee: sub.employeeOwner,
+            suggestedPod: sub.pod,
+            matchType: 'Recurring Subscription' as const,
+            confidence: 75,
+            confidenceLevel: 'Medium' as const,
+            confidenceReasons: ['Vendor and amount matched active subscription', 'Transaction date is outside the expected +/-7 day billing window'],
+            status: 'Review' as const
+          };
+        }
+
+        return {
+          ...txn,
+          normalizedVendor: txn.normalizedVendor || sub.vendor,
+          suggestedSubscriptionId: sub.subscriptionId,
+          matchType: 'Recurring Subscription' as const,
+          confidence: 60,
+          confidenceLevel: 'Low' as const,
+          confidenceReasons: ['Vendor matched active subscription', 'Amount variance beyond 5% tolerance'],
+          status: 'Review' as const
+        };
+      } else if (vendorMatchingSubs.length > 1) {
+        return {
+          ...txn,
+          confidence: 50,
+          confidenceLevel: 'Low' as const,
+          confidenceReasons: ['Vendor matched', 'Multiple active subscriptions found'],
+          status: 'Possible Multiple Matches' as const
+        };
+      }
+
+      // Priority 2: Exact INR Amount + Vendor Match (one-time purchases)
+      const exactInrPurchase = purchases.find(p =>
+        (p.actualBankInrAmount === txn.inrAmount) &&
         ((p.vendor && p.vendor.toLowerCase() === txn.normalizedVendor?.toLowerCase()) || (p.vendor && txn.originalDescription.toLowerCase().includes(p.vendor.toLowerCase())))
       );
 
@@ -137,6 +203,7 @@ export default function ReconciliationView({
           suggestedClient: exactInrPurchase.client,
           suggestedEmployee: exactInrPurchase.employee,
           suggestedPod: exactInrPurchase.pod,
+          matchType: 'One-time Purchase' as const,
           confidence: 99,
           confidenceLevel: 'High' as const,
           confidenceReasons: ['Exact Actual Bank INR Amount matched', 'Vendor matched'],
@@ -144,9 +211,9 @@ export default function ReconciliationView({
         };
       }
 
-      // Priority 2: Exact Vendor Amount + Vendor Match
-      const exactVendorAmtPurchase = purchases.find(p => 
-        (p.actualAmount === txn.intlAmount || p.actualAmount === txn.inrAmount) && 
+      // Priority 3: Exact Vendor Amount + Vendor Match (one-time purchases)
+      const exactVendorAmtPurchase = purchases.find(p =>
+        (p.actualAmount === txn.intlAmount || p.actualAmount === txn.inrAmount) &&
         ((p.vendor && p.vendor.toLowerCase() === txn.normalizedVendor?.toLowerCase()) || (p.vendor && txn.originalDescription.toLowerCase().includes(p.vendor.toLowerCase())))
       );
 
@@ -158,6 +225,7 @@ export default function ReconciliationView({
           suggestedClient: exactVendorAmtPurchase.client,
           suggestedEmployee: exactVendorAmtPurchase.employee,
           suggestedPod: exactVendorAmtPurchase.pod,
+          matchType: 'One-time Purchase' as const,
           confidence: 90,
           confidenceLevel: 'High' as const,
           confidenceReasons: ['Actual Vendor Amount matched', 'Vendor matched'],
@@ -165,53 +233,7 @@ export default function ReconciliationView({
         };
       }
 
-      // Priority 3: Subscription Master
-      if (txn.normalizedVendor) {
-        const matchingSubs = subscriptions.filter(s => 
-          s.vendor && s.vendor.toLowerCase() === txn.normalizedVendor!.toLowerCase() && 
-          s.status === 'Active'
-        );
-
-        if (matchingSubs.length === 1) {
-          const sub = matchingSubs[0];
-          
-          const inrMatch = sub.actualBankInrAmount && Math.abs(txn.inrAmount - sub.actualBankInrAmount) < 5;
-          const intlMatch = txn.intlAmount > 0 && Math.abs(txn.intlAmount - sub.expectedRecurringAmount) < 5;
-          
-          if (inrMatch || intlMatch) {
-             return {
-               ...txn,
-               suggestedSubscriptionId: sub.subscriptionId,
-               suggestedVendor: sub.vendor,
-               suggestedClient: sub.client,
-               suggestedEmployee: sub.employeeOwner,
-               suggestedPod: sub.pod,
-               confidence: 95,
-               confidenceLevel: 'High' as const,
-               confidenceReasons: ['Merchant matched', 'Active subscription found', 'Amount matched'],
-               status: 'Matched' as const
-             };
-          } else {
-             return {
-               ...txn,
-               suggestedSubscriptionId: sub.subscriptionId,
-               confidence: 70,
-               confidenceLevel: 'Medium' as const,
-               confidenceReasons: ['Merchant matched', 'Active subscription found', 'Amount variance detected'],
-               status: 'Review' as const
-             };
-          }
-        } else if (matchingSubs.length > 1) {
-           return {
-             ...txn,
-             confidence: 50,
-             confidenceLevel: 'Low' as const,
-             confidenceReasons: ['Merchant matched', 'Multiple active subscriptions found'],
-             status: 'Possible Multiple Matches' as const
-           };
-        }
-      }
-
+      // Priority 4: Manual — Unidentified
       return txn;
     });
 
@@ -397,18 +419,32 @@ export default function ReconciliationView({
                         )}
                       </td>
                       <td className="p-4">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border
-                          ${txn.status === 'Matched' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                            txn.status === 'Review' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
-                            txn.status === 'Associated' ? 'bg-slate-100 text-slate-700 border-slate-200' :
-                            'bg-red-50 text-red-700 border-red-200'
-                          }`}>
-                          {txn.status === 'Matched' && <CheckCircle2 className="w-3.5 h-3.5" />}
-                          {txn.status === 'Review' && <Clock className="w-3.5 h-3.5" />}
-                          {txn.status === 'Associated' && <LinkIcon className="w-3.5 h-3.5" />}
-                          {txn.status === 'Unidentified' && <AlertCircle className="w-3.5 h-3.5" />}
-                          {txn.status}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border
+                            ${txn.status === 'Matched' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                              txn.status === 'Review' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
+                              txn.status === 'Associated' ? 'bg-slate-100 text-slate-700 border-slate-200' :
+                              'bg-red-50 text-red-700 border-red-200'
+                            }`}>
+                            {txn.status === 'Matched' && <CheckCircle2 className="w-3.5 h-3.5" />}
+                            {txn.status === 'Review' && <Clock className="w-3.5 h-3.5" />}
+                            {txn.status === 'Associated' && <LinkIcon className="w-3.5 h-3.5" />}
+                            {txn.status === 'Unidentified' && <AlertCircle className="w-3.5 h-3.5" />}
+                            {txn.status}
+                          </span>
+                          {(txn.suggestedPurchaseId || txn.suggestedSubscriptionId) && txn.status !== 'Associated' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onConfirmMatch(txn.id);
+                              }}
+                              className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 hover:underline"
+                              title="Confirm this match"
+                            >
+                              Confirm
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -528,9 +564,9 @@ export default function ReconciliationView({
               <section>
                 <h4 className="text-sm font-semibold text-slate-900 mb-4 uppercase tracking-wider">Action</h4>
                 <div className="grid grid-cols-2 gap-3">
-                  <button 
+                  <button
                     onClick={() => {
-                      onUpdateTransaction(selectedTxn.id, { status: 'Matched', confidenceLevel: 'High', confidence: 100 });
+                      onConfirmMatch(selectedTxn.id);
                       setSelectedTxnId(null);
                     }}
                     className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors"

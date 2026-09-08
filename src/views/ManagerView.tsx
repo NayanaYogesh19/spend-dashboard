@@ -59,7 +59,6 @@ export default function ManagerView({ requests, onUpdateStatus }: ManagerViewPro
                     <div>
                       <span className="block text-slate-400 text-[10px] uppercase tracking-wider font-bold mb-1">Expense Type</span>
                       <span className="font-semibold text-slate-800">{req.expenseType}</span>
-                      {req.clientName && <span className="text-slate-500 ml-1 font-medium">({req.clientName})</span>}
                     </div>
                     <div>
                       <span className="block text-slate-400 text-[10px] uppercase tracking-wider font-bold mb-1">Purchase Type</span>
@@ -67,8 +66,8 @@ export default function ManagerView({ requests, onUpdateStatus }: ManagerViewPro
                       {req.subscriptionFrequency && <span className="text-slate-500 ml-1 font-medium">({req.subscriptionFrequency})</span>}
                     </div>
                     <div className="col-span-2">
-                      <span className="block text-slate-400 text-[10px] uppercase tracking-wider font-bold mb-1">Purpose</span>
-                      <span className="text-slate-700">{req.purpose}</span>
+                      <span className="block text-slate-400 text-[10px] uppercase tracking-wider font-bold mb-1">{req.expenseType === 'Client' ? 'Client Name' : 'Account Name'}</span>
+                      <span className="text-slate-700">{req.clientName || '—'}</span>
                     </div>
                     {req.notes && (
                       <div className="col-span-2 bg-slate-50 p-4 rounded-lg border border-slate-100 text-slate-600 text-sm">

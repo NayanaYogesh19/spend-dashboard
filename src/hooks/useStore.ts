@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { PurchaseRequest, RequestStatus, PurchaseRecord, SubscriptionRecord, AdSpendRecord, ReconciliationPeriod, BankTransaction, MerchantAlias, CardType, AuditLog, PurchaseCompletionDetails } from '../types';
+import { PurchaseRequest, RequestStatus, PurchaseRecord, SubscriptionRecord, AdSpendRecord, ReconciliationPeriod, BankTransaction, MerchantAlias, CardType, AuditLog, PurchaseCompletionDetails, ImportedSubscriptionInput } from '../types';
+import { parseBankDate, toISODate, addBillingCycle } from '../utils/recurringMatch';
 
 const STORAGE_KEY = 'spendy_data';
 
@@ -304,6 +305,72 @@ export function useStore() {
     }));
   };
 
+  const confirmTransactionMatch = (transactionId: string) => {
+    setData(prev => {
+      const txn = prev.bankTransactions.find(t => t.id === transactionId);
+      if (!txn) return prev;
+
+      let subscriptions = prev.subscriptions;
+
+      // If this transaction is a recurring subscription match, roll the subscription's
+      // billing dates forward so future reconciliations can compute the next window.
+      if (txn.suggestedSubscriptionId) {
+        const chargeDate = parseBankDate(txn.originalDate);
+        subscriptions = prev.subscriptions.map(s => {
+          if (s.subscriptionId !== txn.suggestedSubscriptionId) return s;
+          if (!chargeDate) return s;
+          return {
+            ...s,
+            lastChargedDate: toISODate(chargeDate),
+            nextExpectedCharge: toISODate(addBillingCycle(chargeDate, s.billingFrequency))
+          };
+        });
+      }
+
+      return {
+        ...prev,
+        bankTransactions: prev.bankTransactions.map(t => t.id === transactionId ? { ...t, status: 'Matched', confidenceLevel: 'High', confidence: 100 } : t),
+        subscriptions
+      };
+    });
+  };
+
+  const addImportedSubscription = (input: ImportedSubscriptionInput) => {
+    const year = new Date().getFullYear();
+    const subId = `SUB-${year}-${String(Math.floor(Math.random() * 999) + 1).padStart(3, '0')}`;
+
+    const record: SubscriptionRecord = {
+      id: crypto.randomUUID(),
+      subscriptionId: subId,
+      vendor: input.vendor,
+      tool: input.vendor,
+      employeeOwner: 'Finance (Imported)',
+      pod: 'Finance',
+      client: input.client || undefined,
+      billable: input.billable,
+      card: input.card,
+      expectedRecurringAmount: input.amount,
+      currency: input.currency,
+      billingFrequency: input.billingFrequency,
+      category: input.category || undefined,
+      startDate: input.startDate || input.nextExpectedCharge,
+      lastChargedDate: input.lastChargedDate || undefined,
+      nextExpectedCharge: input.nextExpectedCharge,
+      status: input.status,
+      notes: input.notes || undefined,
+      source: 'Imported'
+    };
+
+    setData(prev => ({ ...prev, subscriptions: [record, ...prev.subscriptions] }));
+  };
+
+  const updateSubscription = (id: string, updates: Partial<SubscriptionRecord>) => {
+    setData(prev => ({
+      ...prev,
+      subscriptions: prev.subscriptions.map(s => (s.id === id ? { ...s, ...updates } : s))
+    }));
+  };
+
   const addMerchantAlias = (alias: Omit<MerchantAlias, 'id'>) => {
     const newAlias: MerchantAlias = { ...alias, id: crypto.randomUUID() };
     setData(prev => ({ ...prev, merchantAliases: [...prev.merchantAliases, newAlias] }));
@@ -356,6 +423,9 @@ export function useStore() {
     addReconciliationPeriod,
     importBankTransactions,
     updateBankTransaction,
+    confirmTransactionMatch,
+    addImportedSubscription,
+    updateSubscription,
     addMerchantAlias,
     closePeriod,
     toggleFeeBillable

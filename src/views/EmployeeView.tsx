@@ -8,8 +8,9 @@ interface EmployeeViewProps {
   onCompletePurchase?: (id: string, details: PurchaseCompletionDetails) => void;
 }
 
-const PODS = ['Creative', 'Performance Marketing', 'SEO', 'Account Management', 'DevOps'];
-const CURRENCIES = ['USD', 'EUR', 'GBP', 'AUD', 'CAD', 'INR'];
+const PODS = ['Beacons', 'Nexus', 'Elite', 'Dyotha', 'Alpha', 'Ajna', 'TD Internal'];
+const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD'];
+const CURRENCY_SYMBOLS: Record<string, string> = { INR: '₹', USD: '$', EUR: '€', GBP: '£', AUD: 'A$', CAD: 'C$' };
 
 export default function EmployeeView({ requests, onAddRequest, onCompletePurchase }: EmployeeViewProps) {
   const [view, setView] = useState<'list' | 'new'>('list');
@@ -18,12 +19,11 @@ export default function EmployeeView({ requests, onAddRequest, onCompletePurchas
   const [requesterName, setRequesterName] = useState('');
   const [pod, setPod] = useState('');
   const [toolVendor, setToolVendor] = useState('');
-  const [purpose, setPurpose] = useState('');
   const [expenseCategory, setExpenseCategory] = useState('');
   const [expenseType, setExpenseType] = useState<ExpenseType>('Internal');
   const [clientName, setClientName] = useState('');
   const [amount, setAmount] = useState('');
-  const [currency, setCurrency] = useState('USD');
+  const [currency, setCurrency] = useState('INR');
   const [cardRequired, setCardRequired] = useState<CardType>('Internal Card');
   const [purchaseType, setPurchaseType] = useState<PurchaseType>('One-time Purchase');
   const [subscriptionFrequency, setSubscriptionFrequency] = useState<SubscriptionFrequency>('Monthly');
@@ -33,7 +33,7 @@ export default function EmployeeView({ requests, onAddRequest, onCompletePurchas
   // Completion Form State
   const [completionReqId, setCompletionReqId] = useState<string | null>(null);
   const [actualVendorAmount, setActualVendorAmount] = useState('');
-  const [actualCurrency, setActualCurrency] = useState('USD');
+  const [actualCurrency, setActualCurrency] = useState('INR');
   const [actualPurchaseDate, setActualPurchaseDate] = useState('');
   const [invoiceUploaded, setInvoiceUploaded] = useState(false);
   const [actualBankInrAmount, setActualBankInrAmount] = useState('');
@@ -74,10 +74,9 @@ export default function EmployeeView({ requests, onAddRequest, onCompletePurchas
       requesterName,
       pod,
       toolVendor,
-      purpose,
       expenseCategory,
       expenseType,
-      clientName: expenseType === 'Client' ? clientName : undefined,
+      clientName: clientName || undefined,
       amount: parseFloat(amount) || 0,
       currency,
       cardRequired,
@@ -97,12 +96,11 @@ export default function EmployeeView({ requests, onAddRequest, onCompletePurchas
     setRequesterName('');
     setPod('');
     setToolVendor('');
-    setPurpose('');
     setExpenseCategory('');
     setExpenseType('Internal');
     setClientName('');
     setAmount('');
-    setCurrency('USD');
+    setCurrency('INR');
     setCardRequired('Internal Card');
     setPurchaseType('One-time Purchase');
     setSubscriptionFrequency('Monthly');
@@ -163,11 +161,6 @@ export default function EmployeeView({ requests, onAddRequest, onCompletePurchas
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">Tool / Vendor *</label>
               <input required type="text" value={toolVendor} onChange={e => setToolVendor(e.target.value)} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg shadow-inner focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium text-slate-800" placeholder="e.g. Google Ads, Notion, Asana" />
             </div>
-            <div className="md:col-span-2">
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">Purpose *</label>
-              <input required type="text" value={purpose} onChange={e => setPurpose(e.target.value)} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg shadow-inner focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium text-slate-800" placeholder="e.g. Client X Q3 Campaign, Team Management" />
-            </div>
-            
             {/* Expense Type Toggle */}
             <div className="md:col-span-2 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4 shadow-sm">
               <div className="flex gap-4">
@@ -180,32 +173,25 @@ export default function EmployeeView({ requests, onAddRequest, onCompletePurchas
                   <span className="text-sm font-semibold text-slate-700">Client Expense</span>
                 </label>
               </div>
-              
-              {expenseType === 'Client' && (
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">Client Name *</label>
-                  <input required type="text" value={clientName} onChange={e => setClientName(e.target.value)} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg shadow-inner focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium text-slate-800" placeholder="Client account to bill" />
-                </div>
-              )}
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">
+                  {expenseType === 'Client' ? 'Client Name *' : 'Account Name *'}
+                </label>
+                <input required type="text" value={clientName} onChange={e => setClientName(e.target.value)} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg shadow-inner focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium text-slate-800" placeholder={expenseType === 'Client' ? 'Client account to bill' : 'e.g. Internal Ops, Marketing Team'} />
+              </div>
             </div>
 
-            <div>
+            <div className="md:col-span-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">Expense Category *</label>
               <input required type="text" value={expenseCategory} onChange={e => setExpenseCategory(e.target.value)} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg shadow-inner focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium text-slate-800" placeholder="e.g. Software, Media Spend, Travel" />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">Card Required *</label>
-              <select value={cardRequired} onChange={e => setCardRequired(e.target.value as CardType)} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg shadow-inner focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium text-slate-800">
-                <option value="Internal Card">Internal Card</option>
-                <option value="Client Card">Client Card</option>
-              </select>
             </div>
 
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">Expected Amount *</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <span className="text-slate-500 sm:text-sm">$</span>
+                  <span className="text-slate-500 sm:text-sm">{CURRENCY_SYMBOLS[currency] || currency}</span>
                 </div>
                 <input required type="number" step="0.01" min="0" value={amount} onChange={e => setAmount(e.target.value)} className="w-full pl-7 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg shadow-inner focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium text-slate-800" placeholder="0.00" />
               </div>

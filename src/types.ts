@@ -20,6 +20,7 @@ export type RequestStatus =
 
 export type SubscriptionStatus = 'Active' | 'Paused' | 'Cancelled';
 export type EvidenceType = 'CSV' | 'Invoice' | 'Screenshot' | 'None';
+export type SubscriptionSource = 'Approved Request' | 'Imported';
 
 export interface PurchaseCompletionDetails {
   actualVendorAmount: number;
@@ -41,6 +42,7 @@ export interface PurchaseCompletionDetails {
 export type BankTransactionType = 'Merchant' | 'Fee' | 'Tax' | 'Refund' | 'Reversal' | 'Payment' | 'Adjustment' | 'Header';
 export type MatchStatus = 'Matched' | 'Review' | 'Unidentified' | 'Associated' | 'Possible Multiple Matches';
 export type ConfidenceLevel = 'High' | 'Medium' | 'Low';
+export type BankMatchType = 'Recurring Subscription' | 'One-time Purchase';
 
 export interface PurchaseRequest {
   id: string; // Internal UUID
@@ -48,7 +50,7 @@ export interface PurchaseRequest {
   requesterName: string;
   pod: string;
   toolVendor: string;
-  purpose: string;
+  purpose?: string;
   expenseCategory: string;
   expenseType: ExpenseType;
   clientName?: string;
@@ -89,7 +91,7 @@ export interface PurchaseRecord {
 export interface SubscriptionRecord {
   id: string;
   subscriptionId: string; // SUB-2026-001
-  originalPurchaseId: string;
+  originalPurchaseId?: string; // Absent for subscriptions onboarded directly via Registers
   vendor: string;
   tool: string;
   employeeOwner: string;
@@ -100,6 +102,7 @@ export interface SubscriptionRecord {
   expectedRecurringAmount: number;
   currency: string;
   billingFrequency: SubscriptionFrequency;
+  category?: string;
   startDate: string;
   expectedRenewalDate?: string;
   lastChargedDate?: string;
@@ -108,6 +111,25 @@ export interface SubscriptionRecord {
   evidenceUrl?: string;
   actualBankInrAmount?: number;
   bankVerificationStatus?: 'Pending' | 'Finance Confirmed' | 'Statement Confirmed';
+  notes?: string;
+  source?: SubscriptionSource; // 'Approved Request' (default when absent) or 'Imported'
+}
+
+// Input for onboarding a subscription that was already running before Spendy existed.
+export interface ImportedSubscriptionInput {
+  vendor: string;
+  category?: string;
+  amount: number;
+  currency: string;
+  billingFrequency: SubscriptionFrequency;
+  card: CardType;
+  client?: string;
+  billable: boolean;
+  startDate?: string;
+  lastChargedDate?: string;
+  nextExpectedCharge: string;
+  status: SubscriptionStatus;
+  notes?: string;
 }
 
 export interface AdSpendRecord {
@@ -168,6 +190,7 @@ export interface BankTransaction {
   confidence?: number; // 0-100
   confidenceReasons?: string[];
   confidenceLevel?: ConfidenceLevel;
+  matchType?: BankMatchType;
   status: MatchStatus;
   assignedTo?: string; // Employee name if unidentified
   isFeeBillableToClient?: boolean; // For tax/fee toggling in Client Billing
@@ -216,6 +239,9 @@ export interface AppState {
   addReconciliationPeriod: (name: string, card: CardType) => string;
   importBankTransactions: (periodId: string, transactions: Omit<BankTransaction, 'id' | 'periodId'>[]) => void;
   updateBankTransaction: (id: string, updates: Partial<BankTransaction>) => void;
+  confirmTransactionMatch: (transactionId: string) => void;
+  addImportedSubscription: (input: ImportedSubscriptionInput) => void;
+  updateSubscription: (id: string, updates: Partial<SubscriptionRecord>) => void;
   addMerchantAlias: (alias: Omit<MerchantAlias, 'id'>) => void;
   closePeriod: (periodId: string, reason: string, user: string) => void;
   toggleFeeBillable: (txnId: string, billable: boolean) => void;

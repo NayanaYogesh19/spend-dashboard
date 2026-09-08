@@ -53,22 +53,10 @@ export default function FinanceView({ requests, onUpdateStatus, onUpdateBankAmou
     setHasSearched(false);
   };
 
-  const [editingInrReqId, setEditingInrReqId] = useState<string | null>(null);
-  const [financeInrAmount, setFinanceInrAmount] = useState('');
-
   const handleProvideOTP = () => {
     if (!searchedRequest) return;
     onUpdateStatus(searchedRequest.id, 'Awaiting Purchase Completion');
     clearSearch();
-  };
-
-  const submitFinanceInr = (id: string) => {
-    const val = parseFloat(financeInrAmount);
-    if (!isNaN(val) && onUpdateBankAmount) {
-      onUpdateBankAmount(id, val);
-    }
-    setEditingInrReqId(null);
-    setFinanceInrAmount('');
   };
 
   const getStatusBadge = (status: string) => {
@@ -280,7 +268,6 @@ export default function FinanceView({ requests, onUpdateStatus, onUpdateBankAmou
                   <th scope="col" className="px-6 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Employee</th>
                   <th scope="col" className="px-6 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Expected</th>
                   <th scope="col" className="px-6 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Actual Vendor</th>
-                  <th scope="col" className="px-6 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bank INR</th>
                   <th scope="col" className="px-6 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</th>
                 </tr>
               </thead>
@@ -299,22 +286,6 @@ export default function FinanceView({ requests, onUpdateStatus, onUpdateBankAmou
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs font-semibold text-slate-800">
                       {req.completionDetails ? `${req.completionDetails.actualVendorAmount} ${req.completionDetails.actualCurrency}` : '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-xs font-semibold text-slate-800">
-                      {editingInrReqId === req.id ? (
-                        <div className="flex items-center gap-2">
-                          <input type="number" value={financeInrAmount} onChange={e => setFinanceInrAmount(e.target.value)} className="w-20 px-2 py-1 border rounded" />
-                          <button onClick={() => submitFinanceInr(req.id)} className="text-green-600 hover:text-green-700 font-bold">✓</button>
-                          <button onClick={() => setEditingInrReqId(null)} className="text-slate-400">✕</button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          {req.completionDetails?.actualBankInrAmount ? `₹${req.completionDetails.actualBankInrAmount}` : 'Pending'}
-                          {req.completionDetails && req.status === 'Purchase Completed' && (
-                             <button onClick={() => { setEditingInrReqId(req.id); setFinanceInrAmount(req.completionDetails?.actualBankInrAmount?.toString() || ''); }} className="text-slate-400 hover:text-blue-600 ml-2" title="Finance Confirm INR Amount">✎</button>
-                          )}
-                        </div>
-                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs">
                       {getStatusBadge(req.status)}
