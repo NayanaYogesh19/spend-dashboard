@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { PurchaseRequest, ExpenseType, CardType, PurchaseType, SubscriptionFrequency, PurchaseCompletionDetails } from '../types';
 import { PlusCircle, Send, Save, CheckCircle2, AlertCircle } from 'lucide-react';
+import { PODS } from '../config/org';
 
 interface EmployeeViewProps {
   requests: PurchaseRequest[];
@@ -8,7 +9,9 @@ interface EmployeeViewProps {
   onCompletePurchase?: (id: string, details: PurchaseCompletionDetails) => void;
 }
 
-const PODS = ['Beacons', 'Nexus', 'Elite', 'Dyotha', 'Alpha', 'Ajna', 'TD Internal'];
+
+// OTP is shared by Finance outside the app, so the requester can confirm as soon as the request is approved.
+const CONFIRMABLE_STATUSES = ['Approved', 'Awaiting Purchase Completion'];
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD'];
 const CURRENCY_SYMBOLS: Record<string, string> = { INR: '₹', USD: '$', EUR: '€', GBP: '£', AUD: 'A$', CAD: 'C$' };
 
@@ -319,9 +322,9 @@ export default function EmployeeView({ requests, onAddRequest, onCompletePurchas
                       {new Date(req.createdAt).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs">
-                      {req.status === 'Awaiting Purchase Completion' && (
-                        <button onClick={() => openCompletionForm(req)} className="px-3 py-1.5 bg-blue-50 text-blue-700 font-semibold rounded hover:bg-blue-100 transition-colors">
-                          Update Details
+                      {CONFIRMABLE_STATUSES.includes(req.status) && (
+                        <button onClick={() => openCompletionForm(req)} className="px-3 py-1.5 bg-emerald-600 text-white font-semibold rounded hover:bg-emerald-700 transition-colors shadow-sm">
+                          Confirm
                         </button>
                       )}
                     </td>
@@ -338,8 +341,8 @@ export default function EmployeeView({ requests, onAddRequest, onCompletePurchas
           <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
               <div>
-                <h3 className="text-lg font-bold text-slate-800">Complete Purchase Details</h3>
-                <p className="text-xs text-slate-500">Provide the actual purchase information.</p>
+                <h3 className="text-lg font-bold text-slate-800">Confirm Purchase</h3>
+                <p className="text-xs text-slate-500">Enter the exact amount deducted from the card. It can differ from the request (e.g. USD → INR conversion).</p>
               </div>
               <button onClick={() => setCompletionReqId(null)} className="text-slate-400 hover:text-slate-600">
                 &times;
@@ -373,12 +376,17 @@ export default function EmployeeView({ requests, onAddRequest, onCompletePurchas
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">Actual Purchase Date</label>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">Actual Purchase Date *</label>
                       <input required type="date" value={actualPurchaseDate} onChange={e => setActualPurchaseDate(e.target.value)} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">Actual Bank INR Amount (Optional)</label>
-                      <input type="number" step="0.01" min="0" value={actualBankInrAmount} onChange={e => setActualBankInrAmount(e.target.value)} placeholder="Pending" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">Exact Amount Deducted (INR) *</label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                          <span className="text-slate-500 text-sm">₹</span>
+                        </div>
+                        <input required type="number" step="0.01" min="0" value={actualBankInrAmount} onChange={e => setActualBankInrAmount(e.target.value)} placeholder="As shown on card / bank SMS" className="w-full pl-7 pr-3 py-2 bg-slate-50 border border-emerald-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none" />
+                      </div>
                     </div>
                   </div>
 
@@ -396,7 +404,7 @@ export default function EmployeeView({ requests, onAddRequest, onCompletePurchas
 
               <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
                 <button type="button" onClick={() => setCompletionReqId(null)} className="px-4 py-2 text-sm font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
-                <button type="submit" className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700">Submit Details</button>
+                <button type="submit" className="px-4 py-2 text-sm font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">Confirm Purchase</button>
               </div>
             </form>
           </div>

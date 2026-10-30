@@ -2,6 +2,9 @@ import React from 'react';
 import { PurchaseRequest, RequestStatus } from '../types';
 import { Check, X, Clock, ExternalLink, ShieldCheck } from 'lucide-react';
 
+// Shown with a red ✕ in Past Decisions; every other status is a green ✓.
+const NEGATIVE_STATUSES: RequestStatus[] = ['Rejected', 'Cancelled', 'Purchase Failed'];
+
 interface ManagerViewProps {
   requests: PurchaseRequest[];
   onUpdateStatus: (id: string, status: RequestStatus, managerName: string) => void;
@@ -118,7 +121,9 @@ export default function ManagerView({ requests, onUpdateStatus }: ManagerViewPro
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-slate-100">
-                {pastRequests.map((req) => (
+                {pastRequests.map((req) => {
+                  const negative = NEGATIVE_STATUSES.includes(req.status);
+                  return (
                   <tr key={req.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-xs font-bold text-slate-800">{req.toolVendor}</div>
@@ -128,8 +133,8 @@ export default function ManagerView({ requests, onUpdateStatus }: ManagerViewPro
                       {req.amount.toLocaleString()} {req.currency}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest border ${req.status === 'Approved' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                        {req.status === 'Approved' ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest border ${negative ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+                        {negative ? <X className="w-3 h-3" /> : <Check className="w-3 h-3" />}
                         {req.status}
                       </span>
                       {req.purchaseId && <div className="text-[10px] font-mono text-slate-400 mt-1">{req.purchaseId}</div>}
@@ -138,7 +143,8 @@ export default function ManagerView({ requests, onUpdateStatus }: ManagerViewPro
                       {req.approvalTimestamp ? new Date(req.approvalTimestamp).toLocaleDateString() : 'N/A'}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

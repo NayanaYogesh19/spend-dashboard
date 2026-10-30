@@ -297,7 +297,12 @@ export default function RegistersView({ purchases, subscriptions, adSpends, onAd
                 )}
                 {purchases.map(p => (
                   <tr key={p.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-xs font-mono font-bold text-slate-700">{p.purchaseId}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-xs font-mono font-bold text-slate-700">{p.purchaseId}</div>
+                      {p.source === 'Bank Statement' && (
+                        <div className="text-[9px] font-bold uppercase tracking-widest text-sky-700 mt-0.5" title="Not raised in the tracker; added from the bank statement">From statement</div>
+                      )}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-xs font-bold text-slate-900">{p.vendor}</div>
                       <div className="text-[10px] text-slate-500">{p.employee} • {p.pod} {p.client ? `(${p.client})` : ''}</div>
@@ -306,6 +311,9 @@ export default function RegistersView({ purchases, subscriptions, adSpends, onAd
                       <div className="text-xs font-bold text-slate-900">{p.actualAmount.toLocaleString()} {p.currency}</div>
                       {p.actualAmount !== p.approvedAmount && (
                         <div className="text-[9px] text-amber-600 font-bold uppercase tracking-widest mt-0.5">Approved: {p.approvedAmount}</div>
+                      )}
+                      {p.actualBankInrAmount != null && (
+                        <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">Deducted: ₹{p.actualBankInrAmount.toLocaleString()}</div>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs font-medium text-slate-700">{p.card}</td>
@@ -355,8 +363,11 @@ export default function RegistersView({ purchases, subscriptions, adSpends, onAd
                       <div className="text-xs font-bold text-slate-900">{s.vendor}</div>
                       <div className="text-[10px] text-slate-500">{s.employeeOwner} • {s.pod} {s.client ? `(${s.client})` : ''}</div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-xs font-bold text-slate-900">
-                      {s.expectedRecurringAmount.toLocaleString()} {s.currency}
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-xs font-bold text-slate-900">{s.expectedRecurringAmount.toLocaleString()} {s.currency}</div>
+                      {s.actualBankInrAmount != null && (
+                        <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">Deducted: ₹{s.actualBankInrAmount.toLocaleString()}</div>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs font-medium text-slate-700">
                       {s.billingFrequency === 'Annual' ? 'Yearly' : s.billingFrequency}
