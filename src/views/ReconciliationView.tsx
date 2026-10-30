@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ReconciliationPeriod, BankTransaction, SubscriptionRecord, PurchaseRecord, AdSpendRecord, MerchantAlias, CardType, BankTransactionType, ManualResolutionInput, ExpenseType, SubscriptionFrequency } from '../types';
 import { FileSpreadsheet, Plus, Upload, Search, CheckCircle2, AlertCircle, Clock, Link as LinkIcon, Pencil } from 'lucide-react';
-import { vendorsLooselyMatch, isAmountWithinTolerance, parseBankDate, parseISODate, isWithinBillingWindow } from '../utils/recurringMatch';
+import { vendorsLooselyMatch, isAmountWithinTolerance, parseBankDate, parseISODate, isWithinBillingWindow, daysFromBillingDate } from '../utils/recurringMatch';
 import { PODS } from '../config/org';
 
 // Reconciliation actions are recorded under this name until there's a login.
@@ -218,6 +218,10 @@ export default function ReconciliationView({
     });
 
     // 2. Matching Engine
+    // Subscriptions already matched in this period can't be matched again.
+    const usedSubIds = new Set(
+      bankTransactions.filter(t => t.periodId === selectedPeriodId && t.suggestedSubscriptionId && t.status === 'Matched').map(t => t.suggestedSubscriptionId!)
+    );
     const processedTxns = newTxns.map((txn, index, arr) => {
       if (txn.type === 'Header') return { ...txn, status: 'Associated' as const };
       
@@ -234,70 +238,72 @@ export default function ReconciliationView({
       // Priority 1: Recurring Subscription Match — checked before one-time purchase
       // matching so an active subscription's next billing cycle is recognized even
       // when the transaction date doesn't line up with the original request date.
-      const activeSubs = subscriptions.filter(s => s.status === 'Active');
-      const vendorMatchingSubs = activeSubs.filter(s => vendorsLooselyMatch(s.vendor, txn.originalDescription));
+      // A vendor can have several subscriptions (e.g. one ChatGPT seat per pod), so
+      // candidates are ranked by amount and billing date, and each subscription is
+      // used for at most one line per period.
+      const txnDate = parseBankDate(txn.originalDate);
+      const candidates = subscriptions
+        .filter(s => s.status === 'Active' && !usedSubIds.has(s.subscriptionId) && vendorsLooselyMatch(s.vendor, txn.originalDescription))
+        .map(sub => {
+          const intlAmountMatch = txn.intlAmount > 0 && isAmountWithinTolerance(txn.intlAmount, sub.expectedRecurringAmount, 0.05);
+          const inrAmountMatch = !!sub.actualBankInrAmount && txn.inrAmount > 0 && isAmountWithinTolerance(txn.inrAmount, sub.actualBankInrAmount, 0.05);
+          const amountGap = sub.actualBankInrAmount && txn.inrAmount > 0
+            ? Math.abs(txn.inrAmount - sub.actualBankInrAmount) / sub.actualBankInrAmount
+            : txn.intlAmount > 0 ? Math.abs(txn.intlAmount - sub.expectedRecurringAmount) / sub.expectedRecurringAmount : 1;
+          const referenceDate = parseISODate(sub.lastChargedDate || sub.startDate);
+          const dateMatch = !!referenceDate && !!txnDate && isWithinBillingWindow(txnDate, referenceDate, sub.billingFrequency, 7);
+          const dayGap = referenceDate && txnDate ? daysFromBillingDate(txnDate, referenceDate, sub.billingFrequency) : Infinity;
+          return { sub, amountMatch: intlAmountMatch || inrAmountMatch, dateMatch, amountGap, dayGap };
+        });
 
-      if (vendorMatchingSubs.length === 1) {
-        const sub = vendorMatchingSubs[0];
-
-        const intlAmountMatch = txn.intlAmount > 0 && isAmountWithinTolerance(txn.intlAmount, sub.expectedRecurringAmount, 0.05);
-        const inrAmountMatch = !!sub.actualBankInrAmount && txn.inrAmount > 0 && isAmountWithinTolerance(txn.inrAmount, sub.actualBankInrAmount, 0.05);
-        const amountMatch = intlAmountMatch || inrAmountMatch;
-
-        const referenceDate = parseISODate(sub.lastChargedDate || sub.startDate);
-        const txnDate = parseBankDate(txn.originalDate);
-        const dateMatch = !!referenceDate && !!txnDate && isWithinBillingWindow(txnDate, referenceDate, sub.billingFrequency, 7);
-
-        if (amountMatch && dateMatch) {
-          return {
-            ...txn,
-            normalizedVendor: txn.normalizedVendor || sub.vendor,
-            suggestedSubscriptionId: sub.subscriptionId,
-            suggestedVendor: sub.vendor,
-            suggestedClient: sub.client,
-            suggestedEmployee: sub.employeeOwner,
-            suggestedPod: sub.pod,
-            matchType: 'Recurring Subscription' as const,
-            confidence: 97,
-            confidenceLevel: 'High' as const,
-            confidenceReasons: ['Recurring monthly payment detected', 'Vendor matched active subscription', 'Amount within 5% tolerance', 'Within expected billing cycle window'],
-            status: 'Matched' as const
-          };
-        }
-
-        if (amountMatch) {
-          return {
-            ...txn,
-            normalizedVendor: txn.normalizedVendor || sub.vendor,
-            suggestedSubscriptionId: sub.subscriptionId,
-            suggestedVendor: sub.vendor,
-            suggestedClient: sub.client,
-            suggestedEmployee: sub.employeeOwner,
-            suggestedPod: sub.pod,
-            matchType: 'Recurring Subscription' as const,
-            confidence: 75,
-            confidenceLevel: 'Medium' as const,
-            confidenceReasons: ['Vendor and amount matched active subscription', 'Transaction date is outside the expected +/-7 day billing window'],
-            status: 'Review' as const
-          };
-        }
-
+      const suggest = (sub: SubscriptionRecord, confidence: number, confidenceLevel: 'High' | 'Medium' | 'Low', confidenceReasons: string[], status: 'Matched' | 'Review') => {
+        usedSubIds.add(sub.subscriptionId);
         return {
           ...txn,
           normalizedVendor: txn.normalizedVendor || sub.vendor,
           suggestedSubscriptionId: sub.subscriptionId,
+          suggestedVendor: sub.vendor,
+          suggestedClient: sub.client,
+          suggestedEmployee: sub.employeeOwner,
+          suggestedPod: sub.pod,
           matchType: 'Recurring Subscription' as const,
-          confidence: 60,
-          confidenceLevel: 'Low' as const,
-          confidenceReasons: ['Vendor matched active subscription', 'Amount variance beyond 5% tolerance'],
-          status: 'Review' as const
+          confidence,
+          confidenceLevel,
+          confidenceReasons,
+          status
         };
-      } else if (vendorMatchingSubs.length > 1) {
+      };
+      // Ties go to the more specific vendor name ("Illustrator" beats "Adobe" for "Illustrator ADOBE.LY").
+      const byCloseness = (a: typeof candidates[number], b: typeof candidates[number]) =>
+        a.dayGap - b.dayGap || a.amountGap - b.amountGap || b.sub.vendor.length - a.sub.vendor.length;
+
+      const full = candidates.filter(c => c.amountMatch && c.dateMatch).sort(byCloseness);
+      if (full.length > 0) {
+        const best = full[0];
+        const reasons = ['Recurring payment detected', 'Vendor matched active subscription', 'Amount within 5% tolerance', 'Within expected billing cycle window'];
+        if (candidates.length === 1) return suggest(best.sub, 97, 'High', reasons, 'Matched');
+        // Tied candidates that are interchangeable (same pod and amount, e.g. two identical seats) are still a safe match.
+        const tied = full.filter(c => c.dayGap === best.dayGap && c.amountGap === best.amountGap && c.sub.vendor.length === best.sub.vendor.length);
+        const interchangeable = tied.every(c => c.sub.pod === best.sub.pod && c.sub.actualBankInrAmount === best.sub.actualBankInrAmount);
+        if (tied.length === 1 || interchangeable) {
+          return suggest(best.sub, 90, 'High', [...reasons, `Closest by date and amount of ${candidates.length} ${best.sub.vendor} subscriptions`], 'Matched');
+        }
+        return suggest(best.sub, 70, 'Medium', [...reasons, `${tied.length} ${best.sub.vendor} subscriptions fit equally well: check the pod`], 'Review');
+      }
+
+      const amountOnly = candidates.filter(c => c.amountMatch).sort(byCloseness);
+      if (amountOnly.length > 0) {
+        return suggest(amountOnly[0].sub, 75, 'Medium', ['Vendor and amount matched active subscription', 'Transaction date is outside the expected +/-7 day billing window'], 'Review');
+      }
+
+      if (candidates.length === 1) {
+        return suggest(candidates[0].sub, 60, 'Low', ['Vendor matched active subscription', 'Amount variance beyond 5% tolerance'], 'Review');
+      } else if (candidates.length > 1) {
         return {
           ...txn,
           confidence: 50,
           confidenceLevel: 'Low' as const,
-          confidenceReasons: ['Vendor matched', 'Multiple active subscriptions found'],
+          confidenceReasons: ['Vendor matched', `${candidates.length} active subscriptions found, none within 5% of this amount`],
           status: 'Possible Multiple Matches' as const
         };
       }

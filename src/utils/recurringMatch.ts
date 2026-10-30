@@ -49,6 +49,14 @@ export function isWithinBillingWindow(txnDate: Date, referenceDate: Date, freque
   return isWithinDays(txnDate, addBillingCycle(referenceDate, frequency), windowDays);
 }
 
+// Days between the transaction and the nearer of the last known charge or the next expected one.
+export function daysFromBillingDate(txnDate: Date, referenceDate: Date, frequency: SubscriptionFrequency): number {
+  const day = 24 * 60 * 60 * 1000;
+  const toLast = Math.abs(txnDate.getTime() - referenceDate.getTime());
+  const toNext = Math.abs(txnDate.getTime() - addBillingCycle(referenceDate, frequency).getTime());
+  return Math.round(Math.min(toLast, toNext) / day);
+}
+
 export function normalizeVendorText(s: string): string {
   return s
     .toLowerCase()
