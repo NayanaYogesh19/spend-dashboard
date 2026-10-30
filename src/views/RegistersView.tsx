@@ -307,6 +307,9 @@ export default function RegistersView({ purchases, subscriptions, adSpends, onAd
                       {p.actualAmount !== p.approvedAmount && (
                         <div className="text-[9px] text-amber-600 font-bold uppercase tracking-widest mt-0.5">Approved: {p.approvedAmount}</div>
                       )}
+                      {p.actualBankInrAmount != null && (
+                        <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">Deducted: ₹{p.actualBankInrAmount.toLocaleString()}</div>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs font-medium text-slate-700">{p.card}</td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -355,8 +358,11 @@ export default function RegistersView({ purchases, subscriptions, adSpends, onAd
                       <div className="text-xs font-bold text-slate-900">{s.vendor}</div>
                       <div className="text-[10px] text-slate-500">{s.employeeOwner} • {s.pod} {s.client ? `(${s.client})` : ''}</div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-xs font-bold text-slate-900">
-                      {s.expectedRecurringAmount.toLocaleString()} {s.currency}
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-xs font-bold text-slate-900">{s.expectedRecurringAmount.toLocaleString()} {s.currency}</div>
+                      {s.actualBankInrAmount != null && (
+                        <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">Deducted: ₹{s.actualBankInrAmount.toLocaleString()}</div>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs font-medium text-slate-700">
                       {s.billingFrequency === 'Annual' ? 'Yearly' : s.billingFrequency}

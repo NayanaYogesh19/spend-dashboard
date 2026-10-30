@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { PurchaseRequest, RequestStatus, PurchaseRecord, SubscriptionRecord, AdSpendRecord, ReconciliationPeriod, BankTransaction, MerchantAlias, CardType, AuditLog, PurchaseCompletionDetails, ImportedSubscriptionInput } from '../types';
-import { parseBankDate, toISODate, addBillingCycle } from '../utils/recurringMatch';
+import { parseBankDate, parseISODate, toISODate, addBillingCycle } from '../utils/recurringMatch';
 import { COLLECTIONS, NEWEST_FIRST, Collection, SyncPayload, stableStringify } from '../sync/collections';
 
 // Data used to live only in this browser's localStorage. It's now read once,
@@ -289,7 +289,11 @@ export function useStore() {
       const req = prev.requests.find(r => r.id === id);
       if (!req) return prev;
 
-      const updatedRequests = prev.requests.map(r => r.id === id ? { ...r, status: 'Purchase Completed' as RequestStatus, completionDetails: details } : r);
+      const status: RequestStatus =
+        details.purchaseStatus === 'Failed' ? 'Purchase Failed' :
+        details.purchaseStatus === 'Cancelled' ? 'Cancelled' :
+        'Purchase Completed';
+      const updatedRequests = prev.requests.map(r => r.id === id ? { ...r, status, completionDetails: details } : r);
 
       let purchases = [...prev.purchases];
       let subscriptions = [...prev.subscriptions];
@@ -312,12 +316,15 @@ export function useStore() {
             invoiceDate: details.invoiceDate,
             card: req.cardRequired,
             evidenceUrl: details.invoiceUploaded ? 'uploaded' : undefined,
+            status: details.invoiceUploaded ? 'Completed' : 'Pending Evidence',
             actualBankInrAmount: details.actualBankInrAmount,
             bankVerificationStatus: details.bankVerificationStatus
           });
         } else if (req.purchaseType === 'Recurring Subscription') {
           const year = new Date().getFullYear();
           const subId = `SUB-${year}-${String(Math.floor(Math.random() * 999) + 1).padStart(3, '0')}`;
+          const billingFrequency = details.billingFrequency as SubscriptionRecord['billingFrequency'] || req.subscriptionFrequency || 'Monthly';
+          const firstCharge = parseISODate(details.actualPurchaseDate);
           subscriptions.unshift({
             id: crypto.randomUUID(),
             subscriptionId: subId,
@@ -331,8 +338,10 @@ export function useStore() {
             card: req.cardRequired,
             expectedRecurringAmount: details.actualVendorAmount, // Baseline from actual
             currency: details.actualCurrency,
-            billingFrequency: details.billingFrequency || req.subscriptionFrequency || 'Monthly',
+            billingFrequency,
             startDate: details.actualPurchaseDate,
+            lastChargedDate: details.actualPurchaseDate,
+            nextExpectedCharge: firstCharge ? toISODate(addBillingCycle(firstCharge, billingFrequency)) : undefined,
             status: 'Active',
             evidenceUrl: details.invoiceUploaded ? 'uploaded' : undefined,
             actualBankInrAmount: details.actualBankInrAmount,
