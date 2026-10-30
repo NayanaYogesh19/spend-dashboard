@@ -77,6 +77,30 @@ function isValidPayload(body: unknown): body is SyncPayload {
   );
 }
 
+// Deletes reconciliation periods; their bank_transactions go with them (on delete cascade).
+// Only periods can be deleted, so registers and requests are never removed this way.
+export async function DELETE(request: Request) {
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+  const ids = body?.periods;
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 100 || !ids.every(id => typeof id === 'string')) {
+    return Response.json({ error: 'Expected { periods: string[] }' }, { status: 400 });
+  }
+
+  try {
+    const { data, error } = await getClient().from(TABLE_NAMES.periods).delete().in('id', ids).select('id');
+    if (error) throw new Error(`periods: ${error.message}`);
+    return Response.json({ ok: true, deleted: data.length });
+  } catch (error) {
+    console.error(error);
+    return Response.json({ error: (error as Error).message }, { status: 500 });
+  }
+}
+
 export async function GET() {
   try {
     return Response.json(await readAll(getClient()), { headers: { 'Cache-Control': 'no-store' } });

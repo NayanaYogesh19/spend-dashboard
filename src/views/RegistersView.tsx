@@ -51,9 +51,9 @@ function SubscriptionModal({ mode, initial, onClose, onSave }: SubscriptionModal
 
   const title = mode === 'add' ? 'Add Existing Subscription' : mode === 'edit' ? 'Edit Subscription' : 'Subscription Details';
   const subtitle = mode === 'add'
-    ? 'Onboard a recurring subscription that was already running before Spendy, so reconciliation can match it going forward.'
+    ? 'Onboard a recurring subscription that was already running before SpendHub, so reconciliation can match it going forward.'
     : mode === 'edit'
-      ? 'Update the details Spendy uses to match this subscription during reconciliation.'
+      ? 'Update the details SpendHub uses to match this subscription during reconciliation.'
       : 'Read-only view of this subscription record.';
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -263,7 +263,7 @@ export default function RegistersView({ purchases, subscriptions, adSpends, onAd
           <div className="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
             <div>
               <p className="text-sm font-semibold text-slate-900">Existing Subscription Import</p>
-              <p className="text-xs text-slate-500 mt-0.5">Onboard a recurring subscription that was already running before Spendy, so reconciliation can match it automatically.</p>
+              <p className="text-xs text-slate-500 mt-0.5">Onboard a recurring subscription that was already running before SpendHub, so reconciliation can match it automatically.</p>
             </div>
             <button
               onClick={() => setModal({ mode: 'add' })}

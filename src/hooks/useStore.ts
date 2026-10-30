@@ -633,6 +633,39 @@ export function useStore() {
     setData(prev => ({ ...prev, merchantAliases: [...prev.merchantAliases, newAlias] }));
   };
 
+  // Permanently deletes a reconciliation period and its bank lines on the server, then locally.
+  // Throws if the server refuses, so the caller can tell the user nothing was deleted.
+  const deletePeriod = async (periodId: string, user: string) => {
+    const period = dataRef.current.periods.find(p => p.id === periodId);
+    if (!period) return;
+    const lineIds = dataRef.current.bankTransactions.filter(t => t.periodId === periodId).map(t => t.id);
+
+    inFlightRef.current++;
+    writeVersionRef.current++;
+    try {
+      const res = await fetch(API_URL, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ periods: [periodId] }) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Server returned ${res.status}`);
+    } finally {
+      inFlightRef.current--;
+    }
+
+    syncedRef.current.periods.delete(periodId);
+    for (const id of lineIds) syncedRef.current.bankTransactions.delete(id);
+    setData(prev => ({
+      ...prev,
+      periods: prev.periods.filter(p => p.id !== periodId),
+      bankTransactions: prev.bankTransactions.filter(t => t.periodId !== periodId),
+      auditLogs: [{
+        id: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        user,
+        action: 'Delete Reconciliation Period',
+        entityId: periodId,
+        previousValue: `${period.name} (${period.card}), ${lineIds.length} bank lines`
+      }, ...prev.auditLogs]
+    }));
+  };
+
   const closePeriod = (periodId: string, reason: string, user: string) => {
     setData(prev => ({
       ...prev,
@@ -690,6 +723,7 @@ export function useStore() {
     addImportedSubscription,
     updateSubscription,
     addMerchantAlias,
+    deletePeriod,
     closePeriod,
     toggleFeeBillable
   };
