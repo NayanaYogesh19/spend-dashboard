@@ -71,6 +71,17 @@ const readLegacyData = (): StoreData | null => {
   }
 };
 
+// Legacy records the server doesn't have yet, or null if there are none.
+const missingFrom = (legacy: StoreData | null, server: StoreData): StoreData | null => {
+  if (!legacy) return null;
+  const out = emptyData() as Record<Collection, any[]>;
+  for (const c of COLLECTIONS) {
+    const known = new Set((server[c] as { id: string }[]).map(r => r.id));
+    out[c] = (legacy[c] as { id: string }[]).filter(r => !known.has(r.id));
+  }
+  return COLLECTIONS.some(c => out[c].length > 0) ? out as StoreData : null;
+};
+
 export function useStore() {
   const [data, setData] = useState<StoreData>(emptyData);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('loading');
@@ -103,9 +114,9 @@ export function useStore() {
       setSyncError(null);
       setSyncStatus('ready');
 
-      if (initial && COLLECTIONS.every(c => server[c].length === 0)) {
+      if (initial) {
         try {
-          if (!window.localStorage.getItem(LEGACY_IMPORTED_KEY)) setLegacyData(readLegacyData());
+          if (!window.localStorage.getItem(LEGACY_IMPORTED_KEY)) setLegacyData(missingFrom(readLegacyData(), server));
         } catch { /* storage blocked */ }
       }
     } catch (error) {
@@ -163,7 +174,14 @@ export function useStore() {
 
   const importLegacyData = () => {
     if (!legacyData) return;
-    setData(legacyData);
+    // Merge, skipping anything another browser uploaded since this page loaded.
+    setData(prev => {
+      const toAdd = missingFrom(legacyData, prev);
+      if (!toAdd) return prev;
+      const next = { ...prev } as Record<Collection, any[]>;
+      for (const c of COLLECTIONS) next[c] = [...(prev as Record<Collection, any[]>)[c], ...toAdd[c]];
+      return next as StoreData;
+    });
     try { window.localStorage.setItem(LEGACY_IMPORTED_KEY, new Date().toISOString()); } catch { /* storage blocked */ }
     setLegacyData(null);
   };
