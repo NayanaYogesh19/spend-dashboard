@@ -11,7 +11,7 @@ import { CreditCard, Users, ShieldCheck, Wallet, Database, FileSpreadsheet, BarC
 type Role = 'Employee' | 'Manager' | 'Finance' | 'Registers' | 'Reconciliation' | 'Dashboard';
 
 export default function App() {
-  const { syncStatus, syncError, legacyData, importLegacyData, dismissLegacyData, requests, purchases, subscriptions, adSpends, periods, bankTransactions, merchantAliases, auditLogs, addRequest, updateRequestStatus, processPurchase, processSubscription, processAdSpend, completePurchase, updateBankAmount, addReconciliationPeriod, importBankTransactions, updateBankTransaction, confirmTransactionMatch, addImportedSubscription, updateSubscription, addMerchantAlias, closePeriod, toggleFeeBillable } = useStore();
+  const { syncStatus, syncError, legacyData, importLegacyData, dismissLegacyData, requests, purchases, subscriptions, adSpends, periods, bankTransactions, merchantAliases, auditLogs, addRequest, updateRequestStatus, processPurchase, processSubscription, processAdSpend, completePurchase, updateBankAmount, addReconciliationPeriod, importBankTransactions, updateBankTransaction, confirmTransactionMatch, resolveUnidentifiedTransaction, addImportedSubscription, updateSubscription, addMerchantAlias, closePeriod, toggleFeeBillable } = useStore();
   const [activeRole, setActiveRole] = useState<Role>('Dashboard');
 
   const navItems: { role: Role; icon: React.ReactNode; label: string; desc: string }[] = [
@@ -138,6 +138,7 @@ export default function App() {
             onImport={importBankTransactions}
             onUpdateTransaction={updateBankTransaction}
             onConfirmMatch={confirmTransactionMatch}
+            onResolveUnidentified={resolveUnidentifiedTransaction}
             onAddAlias={addMerchantAlias}
           />}
         </div>

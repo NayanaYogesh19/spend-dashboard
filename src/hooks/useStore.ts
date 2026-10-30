@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { PurchaseRequest, RequestStatus, PurchaseRecord, SubscriptionRecord, AdSpendRecord, ReconciliationPeriod, BankTransaction, MerchantAlias, CardType, AuditLog, PurchaseCompletionDetails, ImportedSubscriptionInput } from '../types';
+import { PurchaseRequest, RequestStatus, PurchaseRecord, SubscriptionRecord, AdSpendRecord, ReconciliationPeriod, BankTransaction, MerchantAlias, CardType, AuditLog, PurchaseCompletionDetails, ImportedSubscriptionInput, ManualResolutionInput } from '../types';
 import { parseBankDate, parseISODate, toISODate, addBillingCycle } from '../utils/recurringMatch';
 import { COLLECTIONS, NEWEST_FIRST, Collection, SyncPayload, stableStringify } from '../sync/collections';
 
@@ -464,7 +464,8 @@ export function useStore() {
   const confirmTransactionMatch = (transactionId: string) => {
     setData(prev => {
       const txn = prev.bankTransactions.find(t => t.id === transactionId);
-      if (!txn) return prev;
+      // Nothing to confirm without a suggested record; use resolveUnidentifiedTransaction instead.
+      if (!txn || !(txn.suggestedPurchaseId || txn.suggestedSubscriptionId || txn.suggestedAdSpendId)) return prev;
 
       let subscriptions = prev.subscriptions;
 
@@ -487,6 +488,106 @@ export function useStore() {
         ...prev,
         bankTransactions: prev.bankTransactions.map(t => t.id === transactionId ? { ...t, status: 'Matched', confidenceLevel: 'High', confidence: 100 } : t),
         subscriptions
+      };
+    });
+  };
+
+  // A card charge nobody raised in the tracker: Finance fills in the details, which
+  // creates the register record and links the transaction to it.
+  const resolveUnidentifiedTransaction = (transactionId: string, input: ManualResolutionInput, user: string) => {
+    setData(prev => {
+      const txn = prev.bankTransactions.find(t => t.id === transactionId);
+      if (!txn) return prev;
+
+      const chargeDate = parseBankDate(txn.originalDate);
+      const isoDate = chargeDate ? toISODate(chargeDate) : new Date().toISOString().split('T')[0];
+      const isIntl = txn.intlAmount > 0;
+      const amount = isIntl ? txn.intlAmount : txn.inrAmount;
+      const currency = isIntl ? (txn.originalCurrency || 'USD') : 'INR';
+      const billable = input.expenseType === 'Client';
+      const card: CardType = billable ? 'Client Card' : 'Internal Card';
+      const year = (chargeDate ?? new Date()).getFullYear();
+
+      let purchases = prev.purchases;
+      let subscriptions = prev.subscriptions;
+      let link: Partial<BankTransaction>;
+
+      if (input.purchaseType === 'Recurring Subscription') {
+        const billingFrequency = input.billingFrequency || 'Monthly';
+        const subscriptionId = `SUB-${year}-${String(Math.floor(Math.random() * 999) + 1).padStart(3, '0')}`;
+        subscriptions = [{
+          id: crypto.randomUUID(),
+          subscriptionId,
+          vendor: input.vendor,
+          tool: input.vendor,
+          employeeOwner: input.purchasedBy,
+          pod: input.pod,
+          client: input.account || undefined,
+          billable,
+          card,
+          expectedRecurringAmount: amount,
+          currency,
+          billingFrequency,
+          startDate: isoDate,
+          lastChargedDate: isoDate,
+          nextExpectedCharge: chargeDate ? toISODate(addBillingCycle(chargeDate, billingFrequency)) : undefined,
+          status: 'Active',
+          actualBankInrAmount: txn.inrAmount,
+          bankVerificationStatus: 'Statement Confirmed',
+          notes: input.notes || undefined,
+          source: 'Bank Statement'
+        }, ...prev.subscriptions];
+        link = { suggestedSubscriptionId: subscriptionId, suggestedPurchaseId: undefined, matchType: 'Recurring Subscription' };
+      } else {
+        const purchaseId = `STMT-${year}-${String(Math.floor(Math.random() * 9999) + 1).padStart(4, '0')}`;
+        purchases = [{
+          id: crypto.randomUUID(),
+          purchaseId,
+          vendor: input.vendor,
+          employee: input.purchasedBy,
+          pod: input.pod,
+          client: input.account || undefined,
+          billable,
+          approvedAmount: amount,
+          actualAmount: amount,
+          currency,
+          purchaseDate: isoDate,
+          card,
+          status: 'Pending Evidence',
+          actualBankInrAmount: txn.inrAmount,
+          bankVerificationStatus: 'Statement Confirmed',
+          notes: input.notes || undefined,
+          source: 'Bank Statement'
+        }, ...prev.purchases];
+        link = { suggestedPurchaseId: purchaseId, suggestedSubscriptionId: undefined, matchType: 'One-time Purchase' };
+      }
+
+      return {
+        ...prev,
+        purchases,
+        subscriptions,
+        bankTransactions: prev.bankTransactions.map(t => t.id === transactionId ? {
+          ...t,
+          ...link,
+          normalizedVendor: input.vendor,
+          suggestedVendor: input.vendor,
+          suggestedClient: input.account || undefined,
+          suggestedEmployee: input.purchasedBy,
+          suggestedPod: input.pod,
+          confidence: 100,
+          confidenceLevel: 'High',
+          confidenceReasons: [`Entered manually by ${user}: not raised in the tracker`],
+          status: 'Matched'
+        } : t),
+        auditLogs: [{
+          id: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          user,
+          action: 'Resolve Unidentified Transaction',
+          entityId: transactionId,
+          newValue: `${input.vendor} • ${input.pod} • ${input.purchasedBy} • ${input.purchaseType}`,
+          comment: input.notes || undefined
+        }, ...prev.auditLogs]
       };
     });
   };
@@ -585,6 +686,7 @@ export function useStore() {
     importBankTransactions,
     updateBankTransaction,
     confirmTransactionMatch,
+    resolveUnidentifiedTransaction,
     addImportedSubscription,
     updateSubscription,
     addMerchantAlias,

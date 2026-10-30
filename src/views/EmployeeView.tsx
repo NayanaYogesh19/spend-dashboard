@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { PurchaseRequest, ExpenseType, CardType, PurchaseType, SubscriptionFrequency, PurchaseCompletionDetails } from '../types';
 import { PlusCircle, Send, Save, CheckCircle2, AlertCircle } from 'lucide-react';
+import { PODS } from '../config/org';
 
 interface EmployeeViewProps {
   requests: PurchaseRequest[];
@@ -8,7 +9,6 @@ interface EmployeeViewProps {
   onCompletePurchase?: (id: string, details: PurchaseCompletionDetails) => void;
 }
 
-const PODS = ['Beacon', 'Nexus', 'Elite', 'Dyotha', 'Ajna', 'SEO', 'SMM', 'Agentic AI', 'Business Development', 'TD Internal', 'HR'];
 
 // OTP is shared by Finance outside the app, so the requester can confirm as soon as the request is approved.
 const CONFIRMABLE_STATUSES = ['Approved', 'Awaiting Purchase Completion'];

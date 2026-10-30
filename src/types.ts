@@ -20,7 +20,7 @@ export type RequestStatus =
 
 export type SubscriptionStatus = 'Active' | 'Paused' | 'Cancelled';
 export type EvidenceType = 'CSV' | 'Invoice' | 'Screenshot' | 'None';
-export type SubscriptionSource = 'Approved Request' | 'Imported';
+export type SubscriptionSource = 'Approved Request' | 'Imported' | 'Bank Statement';
 
 export interface PurchaseCompletionDetails {
   actualVendorAmount: number;
@@ -86,6 +86,20 @@ export interface PurchaseRecord {
   status?: 'Completed' | 'Pending Evidence';
   actualBankInrAmount?: number;
   bankVerificationStatus?: 'Pending' | 'Finance Confirmed' | 'Statement Confirmed';
+  notes?: string;
+  source?: 'Approved Request' | 'Bank Statement'; // 'Approved Request' when absent
+}
+
+// Details Finance enters for a card charge that was never raised in the tracker.
+export interface ManualResolutionInput {
+  vendor: string;
+  pod: string;
+  expenseType: ExpenseType;
+  account?: string;
+  purchasedBy: string;
+  purchaseType: 'One-time Purchase' | 'Recurring Subscription';
+  billingFrequency?: SubscriptionFrequency;
+  notes?: string;
 }
 
 export interface SubscriptionRecord {

@@ -297,7 +297,12 @@ export default function RegistersView({ purchases, subscriptions, adSpends, onAd
                 )}
                 {purchases.map(p => (
                   <tr key={p.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-xs font-mono font-bold text-slate-700">{p.purchaseId}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-xs font-mono font-bold text-slate-700">{p.purchaseId}</div>
+                      {p.source === 'Bank Statement' && (
+                        <div className="text-[9px] font-bold uppercase tracking-widest text-sky-700 mt-0.5" title="Not raised in the tracker; added from the bank statement">From statement</div>
+                      )}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-xs font-bold text-slate-900">{p.vendor}</div>
                       <div className="text-[10px] text-slate-500">{p.employee} • {p.pod} {p.client ? `(${p.client})` : ''}</div>

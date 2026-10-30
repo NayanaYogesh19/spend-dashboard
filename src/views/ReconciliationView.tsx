@@ -1,7 +1,118 @@
 import React, { useState } from 'react';
-import { ReconciliationPeriod, BankTransaction, SubscriptionRecord, PurchaseRecord, AdSpendRecord, MerchantAlias, CardType, BankTransactionType } from '../types';
-import { FileSpreadsheet, Plus, Upload, Search, CheckCircle2, AlertCircle, Clock, Link as LinkIcon } from 'lucide-react';
+import { ReconciliationPeriod, BankTransaction, SubscriptionRecord, PurchaseRecord, AdSpendRecord, MerchantAlias, CardType, BankTransactionType, ManualResolutionInput, ExpenseType, SubscriptionFrequency } from '../types';
+import { FileSpreadsheet, Plus, Upload, Search, CheckCircle2, AlertCircle, Clock, Link as LinkIcon, Pencil } from 'lucide-react';
 import { vendorsLooselyMatch, isAmountWithinTolerance, parseBankDate, parseISODate, isWithinBillingWindow } from '../utils/recurringMatch';
+import { PODS } from '../config/org';
+
+// Reconciliation actions are recorded under this name until there's a login.
+const FINANCE_USER = 'Finance Admin';
+
+const inputClass = 'w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none';
+const labelClass = 'block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1';
+
+// Leading plain words of the bank text, e.g. "GOOGLE WORKSPACE CYBS SI MUMBAI IN" -> "Google Workspace",
+// "IND*LINKEDIN (PGSI) WWW.LINKEDIN. IN" -> "Linkedin". Finance can correct it in the form.
+function guessVendor(txn: BankTransaction): string {
+  if (txn.normalizedVendor) return txn.normalizedVendor;
+  const words = txn.originalDescription.replace(/^[A-Z]{2,4}\*/, '').split(/[\s*]+/);
+  const leading: string[] = [];
+  for (const w of words) {
+    if (!/^[A-Za-z]+$/.test(w) || leading.length === 2) break;
+    leading.push(w);
+  }
+  return leading.map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+}
+
+function EditTransactionForm({ txn, onCancel, onSave }: { txn: BankTransaction; onCancel: () => void; onSave: (input: ManualResolutionInput) => void }) {
+  const [vendor, setVendor] = useState(guessVendor(txn));
+  const [pod, setPod] = useState('');
+  const [expenseType, setExpenseType] = useState<ExpenseType>('Internal');
+  const [account, setAccount] = useState('');
+  const [purchasedBy, setPurchasedBy] = useState('');
+  const [purchaseType, setPurchaseType] = useState<ManualResolutionInput['purchaseType']>('One-time Purchase');
+  const [billingFrequency, setBillingFrequency] = useState<SubscriptionFrequency>('Monthly');
+  const [notes, setNotes] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave({
+      vendor: vendor.trim(),
+      pod,
+      expenseType,
+      account: account.trim() || undefined,
+      purchasedBy: purchasedBy.trim(),
+      purchaseType,
+      billingFrequency: purchaseType === 'Recurring Subscription' ? billingFrequency : undefined,
+      notes: notes.trim() || undefined
+    });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <p className="text-xs text-slate-500">
+        For a charge that was never raised in the tracker. Saving adds it to Financial Registers and marks this line as matched.
+      </p>
+      <div>
+        <label className={labelClass}>Vendor *</label>
+        <input required value={vendor} onChange={e => setVendor(e.target.value)} className={inputClass} placeholder="e.g. Google Workspace" />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={labelClass}>Pod *</label>
+          <select required value={pod} onChange={e => setPod(e.target.value)} className={inputClass}>
+            <option value="">Select...</option>
+            {PODS.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className={labelClass}>Purchased By *</label>
+          <input required value={purchasedBy} onChange={e => setPurchasedBy(e.target.value)} className={inputClass} placeholder="Employee name" />
+        </div>
+      </div>
+      <div>
+        <div className="flex gap-4 mb-2">
+          {(['Internal', 'Client'] as ExpenseType[]).map(t => (
+            <label key={t} className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-slate-700">
+              <input type="radio" name="editExpenseType" checked={expenseType === t} onChange={() => setExpenseType(t)} />
+              {t} Expense
+            </label>
+          ))}
+        </div>
+        <label className={labelClass}>{expenseType === 'Client' ? 'Client Name *' : 'Account Name'}</label>
+        <input required={expenseType === 'Client'} value={account} onChange={e => setAccount(e.target.value)} className={inputClass} placeholder={expenseType === 'Client' ? 'Client account to bill' : 'e.g. Internal Ops'} />
+      </div>
+      <div>
+        <label className={labelClass}>Purchase Type *</label>
+        <div className="flex flex-wrap gap-2">
+          {(['One-time Purchase', 'Recurring Subscription'] as const).map(t => (
+            <label key={t} className={`px-3 py-1.5 border rounded-lg cursor-pointer text-xs font-semibold ${purchaseType === t ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-600'}`}>
+              <input type="radio" name="editPurchaseType" className="sr-only" checked={purchaseType === t} onChange={() => setPurchaseType(t)} />
+              {t}
+            </label>
+          ))}
+        </div>
+      </div>
+      {purchaseType === 'Recurring Subscription' && (
+        <div>
+          <label className={labelClass}>Billing Frequency</label>
+          <select value={billingFrequency} onChange={e => setBillingFrequency(e.target.value as SubscriptionFrequency)} className={inputClass}>
+            <option value="Monthly">Monthly</option>
+            <option value="Quarterly">Quarterly</option>
+            <option value="Annual">Yearly</option>
+          </select>
+        </div>
+      )}
+      <div>
+        <label className={labelClass}>Notes</label>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className={inputClass} placeholder="Why it wasn't raised in the tracker, etc." />
+      </div>
+      <div className="flex justify-end gap-3 pt-2">
+        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
+        <button type="submit" className="px-4 py-2 text-sm font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">Save &amp; Match</button>
+      </div>
+    </form>
+  );
+}
 
 interface Props {
   periods: ReconciliationPeriod[];
@@ -14,13 +125,15 @@ interface Props {
   onImport: (periodId: string, txns: Omit<BankTransaction, 'id' | 'periodId'>[]) => void;
   onUpdateTransaction: (id: string, updates: Partial<BankTransaction>) => void;
   onConfirmMatch: (transactionId: string) => void;
+  onResolveUnidentified: (transactionId: string, input: ManualResolutionInput, user: string) => void;
   onAddAlias: (alias: Omit<MerchantAlias, 'id'>) => void;
 }
 
 export default function ReconciliationView({
   periods, bankTransactions, subscriptions, purchases, adSpends, merchantAliases,
-  onAddPeriod, onImport, onUpdateTransaction, onConfirmMatch, onAddAlias
+  onAddPeriod, onImport, onUpdateTransaction, onConfirmMatch, onResolveUnidentified, onAddAlias
 }: Props) {
+  const [editingTxnId, setEditingTxnId] = useState<string | null>(null);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(periods[0]?.id || null);
   const [showAddPeriod, setShowAddPeriod] = useState(false);
   const [newPeriodName, setNewPeriodName] = useState('');
@@ -473,7 +586,7 @@ export default function ReconciliationView({
                 <h3 className="text-lg font-semibold text-slate-900">Transaction Details</h3>
                 <p className="text-sm text-slate-500">Ref: {selectedTxn.serialNumber}</p>
               </div>
-              <button onClick={() => setSelectedTxnId(null)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => { setSelectedTxnId(null); setEditingTxnId(null); }} className="text-slate-400 hover:text-slate-600">
                 ×
               </button>
             </div>
@@ -562,27 +675,43 @@ export default function ReconciliationView({
 
               {/* Actions */}
               <section>
-                <h4 className="text-sm font-semibold text-slate-900 mb-4 uppercase tracking-wider">Action</h4>
+                <h4 className="text-sm font-semibold text-slate-900 mb-4 uppercase tracking-wider">{editingTxnId === selectedTxn.id ? 'Edit Details' : 'Action'}</h4>
+                {editingTxnId === selectedTxn.id ? (
+                  <EditTransactionForm
+                    txn={selectedTxn}
+                    onCancel={() => setEditingTxnId(null)}
+                    onSave={input => {
+                      onResolveUnidentified(selectedTxn.id, input, FINANCE_USER);
+                      setEditingTxnId(null);
+                      setSelectedTxnId(null);
+                    }}
+                  />
+                ) : (
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     onClick={() => {
                       onConfirmMatch(selectedTxn.id);
                       setSelectedTxnId(null);
                     }}
-                    className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors"
+                    disabled={!(selectedTxn.suggestedPurchaseId || selectedTxn.suggestedSubscriptionId)}
+                    title={selectedTxn.suggestedPurchaseId || selectedTxn.suggestedSubscriptionId ? 'Confirm this match' : 'No suggested match to confirm. Use Edit Details.'}
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Confirm Match
                   </button>
-                  <button 
+                  <button
                     className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
                   >
                     Change Match
                   </button>
-                  <button 
-                    className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
-                  >
-                    Assign to Employee
-                  </button>
+                  {!(selectedTxn.suggestedPurchaseId || selectedTxn.suggestedSubscriptionId) && selectedTxn.type === 'Merchant' && (
+                    <button
+                      onClick={() => setEditingTxnId(selectedTxn.id)}
+                      className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-blue-300 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-50 transition-colors"
+                    >
+                      <Pencil className="w-4 h-4" /> Edit Details
+                    </button>
+                  )}
                   <button 
                     onClick={() => {
                       onUpdateTransaction(selectedTxn.id, { status: 'Unidentified', confidenceLevel: 'Low', confidence: 0, suggestedSubscriptionId: undefined, suggestedPurchaseId: undefined });
@@ -593,6 +722,7 @@ export default function ReconciliationView({
                     Mark Unidentified
                   </button>
                 </div>
+                )}
               </section>
             </div>
           </div>
