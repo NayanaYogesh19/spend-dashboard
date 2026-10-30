@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ReconciliationPeriod, BankTransaction, SubscriptionRecord, PurchaseRecord, AdSpendRecord, MerchantAlias, CardType, BankTransactionType, ManualResolutionInput, ExpenseType, SubscriptionFrequency } from '../types';
-import { FileSpreadsheet, Plus, Upload, Search, CheckCircle2, AlertCircle, Clock, Link as LinkIcon, Pencil } from 'lucide-react';
+import { FileSpreadsheet, Plus, Upload, Search, CheckCircle2, AlertCircle, Clock, Link as LinkIcon, Pencil, Trash2 } from 'lucide-react';
 import { vendorsLooselyMatch, isAmountWithinTolerance, parseBankDate, parseISODate, isWithinBillingWindow, daysFromBillingDate } from '../utils/recurringMatch';
 import { PODS } from '../config/org';
 
@@ -122,6 +122,7 @@ interface Props {
   adSpends: AdSpendRecord[];
   merchantAliases: MerchantAlias[];
   onAddPeriod: (name: string, card: CardType) => string;
+  onDeletePeriod: (periodId: string, user: string) => Promise<void>;
   onImport: (periodId: string, txns: Omit<BankTransaction, 'id' | 'periodId'>[]) => void;
   onUpdateTransaction: (id: string, updates: Partial<BankTransaction>) => void;
   onConfirmMatch: (transactionId: string) => void;
@@ -131,9 +132,10 @@ interface Props {
 
 export default function ReconciliationView({
   periods, bankTransactions, subscriptions, purchases, adSpends, merchantAliases,
-  onAddPeriod, onImport, onUpdateTransaction, onConfirmMatch, onResolveUnidentified, onAddAlias
+  onAddPeriod, onDeletePeriod, onImport, onUpdateTransaction, onConfirmMatch, onResolveUnidentified, onAddAlias
 }: Props) {
   const [editingTxnId, setEditingTxnId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(periods[0]?.id || null);
   const [showAddPeriod, setShowAddPeriod] = useState(false);
   const [newPeriodName, setNewPeriodName] = useState('');
@@ -146,6 +148,25 @@ export default function ReconciliationView({
   const selectedPeriod = periods.find(p => p.id === selectedPeriodId);
   const currentTransactions = bankTransactions.filter(t => t.periodId === selectedPeriodId);
   const selectedTxn = currentTransactions.find(t => t.id === selectedTxnId);
+
+  const handleDeletePeriod = async () => {
+    if (!selectedPeriod) return;
+    const lines = currentTransactions.length;
+    if (!window.confirm(
+      `Delete "${selectedPeriod.name} (${selectedPeriod.card})" and its ${lines} bank line${lines === 1 ? '' : 's'}?\n\n` +
+      `This can't be undone. Subscriptions, purchases and requests are not affected.`
+    )) return;
+    setDeleting(true);
+    try {
+      await onDeletePeriod(selectedPeriod.id, FINANCE_USER);
+      setSelectedPeriodId(periods.find(p => p.id !== selectedPeriod.id)?.id ?? null);
+      setSelectedTxnId(null);
+    } catch (error) {
+      window.alert(`Could not delete the period. Nothing was deleted.\n\n${(error as Error).message}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleCreatePeriod = (e: React.FormEvent) => {
     e.preventDefault();
@@ -439,7 +460,16 @@ export default function ReconciliationView({
               <p className="text-sm text-slate-500">{selectedPeriod.card} • {currentTransactions.length} Transactions</p>
             </div>
             <div className="flex gap-3">
-              <button 
+              <button
+                onClick={handleDeletePeriod}
+                disabled={deleting || selectedPeriod.status === 'Closed'}
+                title={selectedPeriod.status === 'Closed' ? 'Closed months are kept for the audit trail' : 'Delete this period and its bank lines'}
+                className="flex items-center gap-2 px-4 py-2 bg-white text-red-700 border border-red-200 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Trash2 className="w-4 h-4" />
+                {deleting ? 'Deleting…' : 'Delete Period'}
+              </button>
+              <button
                 onClick={() => setShowImport(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors"
               >

@@ -1,5 +1,5 @@
 {
-  "name": "Spendy",
+  "name": "Trilliant SpendHub",
   "description": "Digital marketing agency purchase request and approval workflow",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

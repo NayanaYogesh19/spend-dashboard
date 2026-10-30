@@ -11,7 +11,7 @@ import { CreditCard, Users, ShieldCheck, Wallet, Database, FileSpreadsheet, BarC
 type Role = 'Employee' | 'Manager' | 'Finance' | 'Registers' | 'Reconciliation' | 'Dashboard';
 
 export default function App() {
-  const { syncStatus, syncError, legacyData, importLegacyData, dismissLegacyData, requests, purchases, subscriptions, adSpends, periods, bankTransactions, merchantAliases, auditLogs, addRequest, updateRequestStatus, processPurchase, processSubscription, processAdSpend, completePurchase, updateBankAmount, addReconciliationPeriod, importBankTransactions, updateBankTransaction, confirmTransactionMatch, resolveUnidentifiedTransaction, addImportedSubscription, updateSubscription, addMerchantAlias, closePeriod, toggleFeeBillable } = useStore();
+  const { syncStatus, syncError, legacyData, importLegacyData, dismissLegacyData, requests, purchases, subscriptions, adSpends, periods, bankTransactions, merchantAliases, auditLogs, addRequest, updateRequestStatus, processPurchase, processSubscription, processAdSpend, completePurchase, updateBankAmount, addReconciliationPeriod, importBankTransactions, updateBankTransaction, confirmTransactionMatch, resolveUnidentifiedTransaction, addImportedSubscription, updateSubscription, addMerchantAlias, closePeriod, deletePeriod, toggleFeeBillable } = useStore();
   const [activeRole, setActiveRole] = useState<Role>('Dashboard');
 
   const navItems: { role: Role; icon: React.ReactNode; label: string; desc: string }[] = [
@@ -33,7 +33,7 @@ export default function App() {
               <div className="w-8 h-8 bg-blue-500 rounded flex items-center justify-center font-bold text-lg italic text-white">
                 S
               </div>
-              <span className="text-xl font-bold tracking-tight">SpendControl</span>
+              <span className="text-xl font-bold tracking-tight">Trilliant SpendHub</span>
             </div>
             
             <div className="text-sm font-medium text-slate-400">
@@ -135,6 +135,7 @@ export default function App() {
             adSpends={adSpends}
             merchantAliases={merchantAliases}
             onAddPeriod={addReconciliationPeriod}
+            onDeletePeriod={deletePeriod}
             onImport={importBankTransactions}
             onUpdateTransaction={updateBankTransaction}
             onConfirmMatch={confirmTransactionMatch}
@@ -148,7 +149,7 @@ export default function App() {
       {/* Footer */}
       <footer className="bg-[#0F172A] border-t border-slate-800 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex justify-between items-center text-sm text-slate-400">
-          <p>© {new Date().getFullYear()} SpendControl. Demo environment.</p>
+          <p>© {new Date().getFullYear()} Trilliant SpendHub.</p>
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${syncError ? 'bg-red-500' : syncStatus === 'ready' ? 'bg-emerald-500' : 'bg-amber-400'}`}></div>
             {syncError ? 'Offline' : syncStatus === 'saving' ? 'Saving…' : syncStatus === 'loading' ? 'Connecting…' : 'All changes saved'}
