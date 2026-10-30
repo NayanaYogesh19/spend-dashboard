@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ReconciliationPeriod, BankTransaction, SubscriptionRecord, PurchaseRecord, AdSpendRecord, AuditLog } from '../types';
 import { BarChart3, AlertCircle, FileSpreadsheet, Lock, Search, Filter } from 'lucide-react';
+import PodSpendChart, { PodSpendRow } from './PodSpendChart';
 
 interface Props {
   periods: ReconciliationPeriod[];
@@ -47,6 +48,34 @@ export default function DashboardView({
   
   const mrc = activeSubs.filter(s => s.billingFrequency === 'Monthly').reduce((sum, s) => sum + s.expectedRecurringAmount, 0);
   const arc = mrc * 12 + activeSubs.filter(s => s.billingFrequency === 'Annual').reduce((sum, s) => sum + s.expectedRecurringAmount, 0);
+
+  // --- Spend by Pod ---
+  const NOT_MATCHED = 'Not yet matched';
+  const addTo = (map: Map<string, PodSpendRow>, label: string, amount: number, muted = false) => {
+    const row = map.get(label) ?? { label, amount: 0, count: 0, muted };
+    row.amount += amount;
+    row.count += 1;
+    map.set(label, row);
+  };
+
+  // Card charges in the selected period, by the pod of the record each line is matched to.
+  const periodPodMap = new Map<string, PodSpendRow>();
+  for (const t of periodTxns.filter(t => t.type === 'Merchant')) {
+    const pod = (t.status === 'Matched' || t.status === 'Review') ? t.suggestedPod : undefined;
+    addTo(periodPodMap, pod || NOT_MATCHED, t.inrAmount, !pod);
+  }
+  const periodPodRows = [...periodPodMap.values()];
+
+  // Active subscriptions as a monthly INR cost (quarterly ÷ 3, yearly ÷ 12).
+  const MONTHS_PER_CYCLE = { Monthly: 1, Quarterly: 3, Annual: 12 } as const;
+  const subPodMap = new Map<string, PodSpendRow>();
+  let subsWithoutInr = 0;
+  for (const s of activeSubs) {
+    const inr = s.actualBankInrAmount ?? (s.currency === 'INR' ? s.expectedRecurringAmount : undefined);
+    if (inr == null) { subsWithoutInr++; continue; }
+    addTo(subPodMap, s.pod || 'Unassigned', inr / MONTHS_PER_CYCLE[s.billingFrequency]);
+  }
+  const subPodRows = [...subPodMap.values()];
 
   // --- Client Billing View Logic ---
   const [selectedClient, setSelectedClient] = useState<string>('');
@@ -217,6 +246,14 @@ export default function DashboardView({
                   </div>
                 </div>
               </div>
+
+              <PodSpendChart
+                title="Spend by Pod"
+                subtitle={`Card charges in ${selectedPeriod.name}, by the pod of the matched record. Fees & taxes excluded.`}
+                rows={periodPodRows}
+                countLabel="transactions"
+                emptyText="No card charges imported for this period yet."
+              />
             </>
           )}
         </div>
@@ -242,6 +279,14 @@ export default function DashboardView({
               <div className="text-2xl font-bold text-blue-600">{clientSubs.length}</div>
             </div>
           </div>
+
+          <PodSpendChart
+            title="Monthly Subscription Cost by Pod"
+            subtitle={`Active subscriptions in INR per month (quarterly ÷ 3, yearly ÷ 12).${subsWithoutInr ? ` ${subsWithoutInr} without an INR amount not included.` : ''}`}
+            rows={subPodRows}
+            countLabel="subscriptions"
+            emptyText="No active subscriptions yet."
+          />
 
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 bg-slate-50">
