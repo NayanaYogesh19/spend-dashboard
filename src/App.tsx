@@ -6,12 +6,12 @@ import FinanceView from './views/FinanceView';
 import RegistersView from './views/RegistersView';
 import ReconciliationView from './views/ReconciliationView';
 import DashboardView from './views/DashboardView';
-import { CreditCard, Users, ShieldCheck, Wallet, Database, FileSpreadsheet, BarChart3 } from 'lucide-react';
+import { CreditCard, Users, ShieldCheck, Wallet, Database, FileSpreadsheet, BarChart3, AlertTriangle, Upload, Loader2 } from 'lucide-react';
 
 type Role = 'Employee' | 'Manager' | 'Finance' | 'Registers' | 'Reconciliation' | 'Dashboard';
 
 export default function App() {
-  const { requests, purchases, subscriptions, adSpends, periods, bankTransactions, merchantAliases, auditLogs, addRequest, updateRequestStatus, processPurchase, processSubscription, processAdSpend, completePurchase, updateBankAmount, addReconciliationPeriod, importBankTransactions, updateBankTransaction, confirmTransactionMatch, addImportedSubscription, updateSubscription, addMerchantAlias, closePeriod, toggleFeeBillable } = useStore();
+  const { syncStatus, syncError, legacyData, importLegacyData, dismissLegacyData, requests, purchases, subscriptions, adSpends, periods, bankTransactions, merchantAliases, auditLogs, addRequest, updateRequestStatus, processPurchase, processSubscription, processAdSpend, completePurchase, updateBankAmount, addReconciliationPeriod, importBankTransactions, updateBankTransaction, confirmTransactionMatch, addImportedSubscription, updateSubscription, addMerchantAlias, closePeriod, toggleFeeBillable } = useStore();
   const [activeRole, setActiveRole] = useState<Role>('Dashboard');
 
   const navItems: { role: Role; icon: React.ReactNode; label: string; desc: string }[] = [
@@ -71,7 +71,41 @@ export default function App() {
           ))}
         </div>
 
+        {syncError && (
+          <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <AlertTriangle className="w-5 h-5 shrink-0" />
+            <div>
+              <div className="font-semibold">Can't reach the database. Recent changes may not be saved yet.</div>
+              <div className="text-red-700">Retrying automatically. Details: {syncError}</div>
+            </div>
+          </div>
+        )}
+
+        {legacyData && (
+          <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+            <div className="flex items-start gap-3">
+              <Upload className="w-5 h-5 shrink-0 text-blue-600" />
+              <div>
+                <div className="font-semibold">This browser has data saved from before the shared database.</div>
+                <div className="text-blue-800">
+                  {legacyData.requests.length} requests, {legacyData.purchases.length} purchases, {legacyData.subscriptions.length} subscriptions, {legacyData.bankTransactions.length} bank transactions. Upload it so everyone can see it?
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <button onClick={dismissLegacyData} className="px-3 py-2 rounded-lg border border-blue-200 bg-white text-blue-800 hover:bg-blue-100">Not now</button>
+              <button onClick={importLegacyData} className="px-3 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700">Upload</button>
+            </div>
+          </div>
+        )}
+
         {/* View Routing */}
+        {syncStatus === 'loading' ? (
+          <div className="min-h-[500px] flex items-center justify-center gap-3 text-slate-500">
+            <Loader2 className="w-5 h-5 animate-spin" />
+            {syncError ? 'Waiting for the database…' : 'Loading data…'}
+          </div>
+        ) : (
         <div className="min-h-[500px]">
           {activeRole === 'Employee' && <EmployeeView requests={requests} onAddRequest={addRequest} onCompletePurchase={completePurchase} />}
           {activeRole === 'Manager' && <ManagerView requests={requests} onUpdateStatus={updateRequestStatus} />}
@@ -107,6 +141,7 @@ export default function App() {
             onAddAlias={addMerchantAlias}
           />}
         </div>
+        )}
       </main>
       
       {/* Footer */}
@@ -114,8 +149,8 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex justify-between items-center text-sm text-slate-400">
           <p>© {new Date().getFullYear()} SpendControl. Demo environment.</p>
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-            System Operational
+            <div className={`w-2 h-2 rounded-full ${syncError ? 'bg-red-500' : syncStatus === 'ready' ? 'bg-emerald-500' : 'bg-amber-400'}`}></div>
+            {syncError ? 'Offline' : syncStatus === 'saving' ? 'Saving…' : syncStatus === 'loading' ? 'Connecting…' : 'All changes saved'}
           </div>
         </div>
       </footer>

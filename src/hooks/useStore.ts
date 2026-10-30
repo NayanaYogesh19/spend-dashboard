@@ -1,48 +1,177 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { PurchaseRequest, RequestStatus, PurchaseRecord, SubscriptionRecord, AdSpendRecord, ReconciliationPeriod, BankTransaction, MerchantAlias, CardType, AuditLog, PurchaseCompletionDetails, ImportedSubscriptionInput } from '../types';
 import { parseBankDate, toISODate, addBillingCycle } from '../utils/recurringMatch';
+import { COLLECTIONS, NEWEST_FIRST, Collection, SyncPayload, stableStringify } from '../sync/collections';
 
-const STORAGE_KEY = 'spendy_data';
+// Data used to live only in this browser's localStorage. It's now read once,
+// to offer a one-time upload to the shared database.
+const LEGACY_STORAGE_KEY = 'spendy_data';
+const LEGACY_IMPORTED_KEY = 'spendy_data_imported';
+const API_URL = '/api/state';
+const REFRESH_MS = 20000;
+
+type StoreData = {
+  requests: PurchaseRequest[];
+  purchases: PurchaseRecord[];
+  subscriptions: SubscriptionRecord[];
+  adSpends: AdSpendRecord[];
+  periods: ReconciliationPeriod[];
+  bankTransactions: BankTransaction[];
+  merchantAliases: MerchantAlias[];
+  auditLogs: AuditLog[];
+};
+
+export type SyncStatus = 'loading' | 'ready' | 'saving' | 'error';
+
+const emptyData = (): StoreData => ({ requests: [], purchases: [], subscriptions: [], adSpends: [], periods: [], bankTransactions: [], merchantAliases: [], auditLogs: [] });
+
+const normalize = (raw: any): StoreData => {
+  const out = emptyData() as Record<Collection, any[]>;
+  for (const c of COLLECTIONS) out[c] = Array.isArray(raw?.[c]) ? raw[c] : [];
+  return out as StoreData;
+};
+
+// id -> stableStringify(record), per collection: what the server is known to hold.
+type Snapshot = Record<Collection, Map<string, string>>;
+
+const snapshotOf = (data: StoreData): Snapshot => {
+  const snap = {} as Snapshot;
+  for (const c of COLLECTIONS) snap[c] = new Map((data[c] as { id: string }[]).map(r => [r.id, stableStringify(r)]));
+  return snap;
+};
+
+// Records that differ from the server. New records get a created_at that keeps
+// their place in the list once the server sorts by it.
+const diff = (data: StoreData, synced: Snapshot) => {
+  const payload: SyncPayload = {};
+  const changed: [Collection, string, string][] = [];
+  let tick = Date.now();
+  for (const c of COLLECTIONS) {
+    const records = data[c] as unknown as ({ id: string } & Record<string, unknown>)[];
+    const oldestFirst = NEWEST_FIRST[c] ? [...records].reverse() : records;
+    for (const record of oldestFirst) {
+      const json = stableStringify(record);
+      const known = synced[c].get(record.id);
+      if (known === json) continue;
+      (payload[c] ??= []).push(known === undefined ? { record, createdAt: new Date(tick++).toISOString() } : { record });
+      changed.push([c, record.id, json]);
+    }
+  }
+  return { payload, changed };
+};
+
+const readLegacyData = (): StoreData | null => {
+  try {
+    const item = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!item) return null;
+    const data = normalize(JSON.parse(item));
+    return COLLECTIONS.some(c => data[c].length > 0) ? data : null;
+  } catch {
+    return null;
+  }
+};
 
 export function useStore() {
-    const [data, setData] = useState<{
-    requests: PurchaseRequest[];
-    purchases: PurchaseRecord[];
-    subscriptions: SubscriptionRecord[];
-    adSpends: AdSpendRecord[];
-    periods: ReconciliationPeriod[];
-    bankTransactions: BankTransaction[];
-    merchantAliases: MerchantAlias[];
-    auditLogs: AuditLog[];
-  }>(() => {
+  const [data, setData] = useState<StoreData>(emptyData);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('loading');
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [legacyData, setLegacyData] = useState<StoreData | null>(null);
+
+  const loadedRef = useRef(false);
+  const syncedRef = useRef<Snapshot>(snapshotOf(emptyData()));
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const inFlightRef = useRef(0);
+  const writeVersionRef = useRef(0);
+
+  const hasLocalChanges = () => Object.keys(diff(dataRef.current, syncedRef.current).payload).length > 0;
+
+  const fetchState = useCallback(async (initial: boolean) => {
+    const versionAtStart = writeVersionRef.current;
     try {
-      const item = window.localStorage.getItem(STORAGE_KEY);
-      if (item) {
-        const parsed = JSON.parse(item);
-        return {
-          requests: parsed.requests || [],
-          purchases: parsed.purchases || [],
-          subscriptions: parsed.subscriptions || [],
-          adSpends: parsed.adSpends || [],
-          periods: parsed.periods || [],
-          bankTransactions: parsed.bankTransactions || [],
-          merchantAliases: parsed.merchantAliases || [],
-          auditLogs: parsed.auditLogs || []
-        };
+      const res = await fetch(API_URL, { cache: 'no-store' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Server returned ${res.status}`);
+      const server = normalize(body);
+
+      // Don't overwrite edits that are unsaved or were saved after this read began.
+      if (!initial && (inFlightRef.current > 0 || writeVersionRef.current !== versionAtStart || hasLocalChanges())) return;
+
+      syncedRef.current = snapshotOf(server);
+      if (initial || stableStringify(server) !== stableStringify(dataRef.current)) setData(server);
+      loadedRef.current = true;
+      setSyncError(null);
+      setSyncStatus('ready');
+
+      if (initial && COLLECTIONS.every(c => server[c].length === 0)) {
+        try {
+          if (!window.localStorage.getItem(LEGACY_IMPORTED_KEY)) setLegacyData(readLegacyData());
+        } catch { /* storage blocked */ }
       }
     } catch (error) {
-      console.warn('Error reading localStorage', error);
+      console.warn('Error loading data', error);
+      setSyncError((error as Error).message);
+      setSyncStatus('error');
     }
-    return { requests: [], purchases: [], subscriptions: [], adSpends: [], periods: [], bankTransactions: [], merchantAliases: [], auditLogs: [] };
-  });
+  }, []);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch (error) {
-      console.warn('Error saving to localStorage', error);
-    }
+    fetchState(true);
+    // Retries the first load too, if it failed.
+    const refresh = () => { if (document.visibilityState === 'visible') fetchState(!loadedRef.current); };
+    const timer = window.setInterval(refresh, REFRESH_MS);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [fetchState]);
+
+  // Push every local change to the server.
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    const { payload, changed } = diff(data, syncedRef.current);
+    if (changed.length === 0) return;
+
+    // Mark as synced now so the next render doesn't resend; undo on failure.
+    const previous = changed.map(([c, id]) => [c, id, syncedRef.current[c].get(id)] as const);
+    for (const [c, id, json] of changed) syncedRef.current[c].set(id, json);
+    inFlightRef.current++;
+    writeVersionRef.current++;
+    setSyncStatus('saving');
+
+    fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(async res => {
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Server returned ${res.status}`);
+        setSyncError(null);
+      })
+      .catch(error => {
+        console.warn('Error saving data', error);
+        for (const [c, id, json] of previous) {
+          if (json === undefined) syncedRef.current[c].delete(id);
+          else syncedRef.current[c].set(id, json);
+        }
+        setSyncError((error as Error).message);
+        // The change is still pending; a re-render re-runs this effect and resends it.
+        window.setTimeout(() => setData(d => ({ ...d })), REFRESH_MS);
+      })
+      .finally(() => {
+        inFlightRef.current--;
+        if (inFlightRef.current === 0) setSyncStatus(s => (s === 'saving' ? 'ready' : s));
+      });
   }, [data]);
+
+  const importLegacyData = () => {
+    if (!legacyData) return;
+    setData(legacyData);
+    try { window.localStorage.setItem(LEGACY_IMPORTED_KEY, new Date().toISOString()); } catch { /* storage blocked */ }
+    setLegacyData(null);
+  };
+
+  const dismissLegacyData = () => {
+    try { window.localStorage.setItem(LEGACY_IMPORTED_KEY, 'dismissed'); } catch { /* storage blocked */ }
+    setLegacyData(null);
+  };
 
   const addRequest = (req: Omit<PurchaseRequest, 'id' | 'createdAt'>) => {
     const newRequest: PurchaseRequest = {
@@ -404,8 +533,13 @@ export function useStore() {
     }));
   };
 
-  return { 
-    requests: data.requests, 
+  return {
+    syncStatus,
+    syncError,
+    legacyData,
+    importLegacyData,
+    dismissLegacyData,
+    requests: data.requests,
     purchases: data.purchases,
     subscriptions: data.subscriptions,
     adSpends: data.adSpends,
