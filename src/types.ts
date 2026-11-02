@@ -185,6 +185,7 @@ export interface BankTransaction {
   rewardPoints: string;
   intlAmount: number;
   inrAmount: number;
+  billingAmountSign?: string; // 7th statement column, e.g. "CR" on credits; blank on debits
   originalCurrency?: string;
   
   // System Fields

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { ReconciliationPeriod, BankTransaction, SubscriptionRecord, PurchaseRecord, AdSpendRecord, MerchantAlias, CardType, BankTransactionType, ManualResolutionInput, ExpenseType, SubscriptionFrequency } from '../types';
-import { FileSpreadsheet, Plus, Upload, Search, CheckCircle2, AlertCircle, Clock, Link as LinkIcon, Pencil, Trash2 } from 'lucide-react';
+import { FileSpreadsheet, Plus, Upload, Search, CheckCircle2, AlertCircle, Clock, Link as LinkIcon, Pencil, Trash2, Download } from 'lucide-react';
 import { vendorsLooselyMatch, isAmountWithinTolerance, parseBankDate, parseISODate, isWithinBillingWindow, daysFromBillingDate } from '../utils/recurringMatch';
 import { PODS } from '../config/org';
+import { buildReconciliationCsv, downloadCsv } from '../utils/reconciliationCsv';
 
 // Reconciliation actions are recorded under this name until there's a login.
 const FINANCE_USER = 'Finance Admin';
@@ -189,7 +190,7 @@ export default function ReconciliationView({
     lines.forEach(line => {
       const cols = line.split('\t');
       if (cols.length >= 6) {
-        const [date, srNo, desc, reward, intlStr, inrStr] = cols;
+        const [date, srNo, desc, reward, intlStr, inrStr, billingSign] = cols;
         
         // Skip header row
         if (date.toLowerCase().includes('date') && desc.toLowerCase().includes('transaction')) return;
@@ -231,6 +232,7 @@ export default function ReconciliationView({
           rewardPoints: reward.trim(),
           intlAmount,
           inrAmount,
+          billingAmountSign: billingSign?.trim() || undefined,
           type,
           normalizedVendor,
           status: 'Unidentified' // We will run matching below
@@ -460,6 +462,18 @@ export default function ReconciliationView({
               <p className="text-sm text-slate-500">{selectedPeriod.card} • {currentTransactions.length} Transactions</p>
             </div>
             <div className="flex gap-3">
+              <button
+                onClick={() => downloadCsv(
+                  `Reconciliation-${selectedPeriod.name}-${selectedPeriod.card}.csv`.replace(/[^\w.-]+/g, '-'),
+                  buildReconciliationCsv(currentTransactions)
+                )}
+                disabled={currentTransactions.length === 0}
+                title="Download this period's statement with the matched Pod and Account"
+                className="flex items-center gap-2 px-4 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Download className="w-4 h-4" />
+                Download CSV
+              </button>
               <button
                 onClick={handleDeletePeriod}
                 disabled={deleting || selectedPeriod.status === 'Closed'}
