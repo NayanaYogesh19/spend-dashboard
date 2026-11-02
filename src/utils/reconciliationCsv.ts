@@ -7,24 +7,11 @@ export const RECONCILIATION_CSV_HEADER = [
 
 const escape = (value: string) => (/[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
 
-// Only matched lines carry a Pod/Account. Fees and taxes take them from the merchant
-// line they follow (the same line they're associated with at import); card header
-// rows and unmatched lines stay blank.
+// Only matched merchant lines carry a Pod/Account. DCC fees, IGST, card header rows
+// and unmatched lines stay blank: fees and taxes aren't assigned to any pod.
 export function buildReconciliationCsv(transactions: BankTransaction[]): string {
-  let lastMerchant: { pod: string; account: string } = { pod: '', account: '' };
-
   const rows = transactions.map(t => {
-    let pod = '';
-    let account = '';
-    if (t.type === 'Merchant') {
-      lastMerchant = t.status === 'Matched'
-        ? { pod: t.suggestedPod || '', account: t.suggestedClient || '' }
-        : { pod: '', account: '' };
-      ({ pod, account } = lastMerchant);
-    } else if (t.type === 'Fee' || t.type === 'Tax') {
-      ({ pod, account } = lastMerchant);
-    }
-
+    const matched = t.type === 'Merchant' && t.status === 'Matched';
     return [
       t.originalDate,
       t.serialNumber,
@@ -33,8 +20,8 @@ export function buildReconciliationCsv(transactions: BankTransaction[]): string 
       t.intlAmount ? String(t.intlAmount) : '',
       String(t.inrAmount),
       t.billingAmountSign || '',
-      pod,
-      account,
+      matched ? t.suggestedPod || '' : '',
+      matched ? t.suggestedClient || '' : '',
     ].map(v => escape(v ?? '')).join(',');
   });
 
