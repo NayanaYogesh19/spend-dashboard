@@ -217,6 +217,9 @@ export function useStore() {
           } else if (status === 'Rejected') {
             updates.managerName = managerName || 'System Admin';
             updates.approvalTimestamp = new Date().toISOString();
+          } else if ((status === 'Awaiting Purchase Completion' || status === 'OTP Verified') && !req.otpProvidedAt) {
+            // Finance has provided the OTP: record the moment (kept if set already).
+            updates.otpProvidedAt = new Date().toISOString();
           }
 
           return { ...req, ...updates };

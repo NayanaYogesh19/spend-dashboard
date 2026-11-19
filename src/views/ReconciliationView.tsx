@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { ReconciliationPeriod, BankTransaction, SubscriptionRecord, PurchaseRecord, AdSpendRecord, MerchantAlias, CardType, BankTransactionType, ManualResolutionInput, ExpenseType, SubscriptionFrequency } from '../types';
 import { FileSpreadsheet, Plus, Upload, Search, CheckCircle2, AlertCircle, Clock, Link as LinkIcon, Pencil, Trash2, Download } from 'lucide-react';
 import { vendorsLooselyMatch, isAmountWithinTolerance, parseBankDate, parseISODate, isWithinBillingWindow, daysFromBillingDate } from '../utils/recurringMatch';
 import { PODS } from '../config/org';
 import { buildReconciliationCsv, downloadCsv } from '../utils/reconciliationCsv';
+import { statementFileToTabText } from '../utils/statementFile';
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 // Reconciliation actions are recorded under this name until there's a login.
 const FINANCE_USER = 'Finance Admin';
@@ -139,11 +142,16 @@ export default function ReconciliationView({
   const [deleting, setDeleting] = useState(false);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(periods[0]?.id || null);
   const [showAddPeriod, setShowAddPeriod] = useState(false);
-  const [newPeriodName, setNewPeriodName] = useState('');
+  const [newPeriodMonth, setNewPeriodMonth] = useState(() => new Date().getMonth()); // 0-11
+  const [newPeriodYear, setNewPeriodYear] = useState(() => new Date().getFullYear());
+  const [periodError, setPeriodError] = useState('');
   const [newPeriodCard, setNewPeriodCard] = useState<CardType>('Internal Card');
   
-  const [rawImportData, setRawImportData] = useState('');
+  const periodYears = Array.from({ length: 7 }, (_, i) => new Date().getFullYear() - 3 + i);
   const [showImport, setShowImport] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedTxnId, setSelectedTxnId] = useState<string | null>(null);
 
   const selectedPeriod = periods.find(p => p.id === selectedPeriodId);
@@ -171,19 +179,24 @@ export default function ReconciliationView({
 
   const handleCreatePeriod = (e: React.FormEvent) => {
     e.preventDefault();
-    if (newPeriodName) {
-      const id = onAddPeriod(newPeriodName, newPeriodCard);
-      setSelectedPeriodId(id);
-      setShowAddPeriod(false);
-      setNewPeriodName('');
+    // Reconciliation is monthly: the period is just a month and year, e.g. "November 2026".
+    const name = `${MONTH_NAMES[newPeriodMonth]} ${newPeriodYear}`;
+    if (periods.some(p => p.name === name && p.card === newPeriodCard)) {
+      setPeriodError(`A period for ${name} (${newPeriodCard}) already exists.`);
+      return;
     }
+    const id = onAddPeriod(name, newPeriodCard);
+    setSelectedPeriodId(id);
+    setShowAddPeriod(false);
+    setPeriodError('');
   };
 
   // 1. Parsing Logic
-  const handleImport = () => {
-    if (!rawImportData.trim() || !selectedPeriodId) return;
+  // Returns the number of transactions imported, or 0 if nothing valid was found.
+  const handleImport = (rawText: string): number => {
+    if (!rawText.trim() || !selectedPeriodId) return 0;
 
-    const lines = rawImportData.trim().split('\n');
+    const lines = rawText.trim().split('\n');
     const newTxns: Omit<BankTransaction, 'id' | 'periodId'>[] = [];
     
     // Header pattern mapping (Date, Sr.No., Transaction Details, Reward Point Header, Intl.Amount, Amount(in Rs))
@@ -379,14 +392,36 @@ export default function ReconciliationView({
       return txn;
     });
 
-    if (processedTxns.length === 0) {
-      alert("No valid transactions found. Please ensure you are pasting directly from the Excel/CSV statement with at least 6 columns per row (Date, SrNo, Description, Reward, IntlAmount, INRAmount).");
-      return;
-    }
+    if (processedTxns.length === 0) return 0;
 
     onImport(selectedPeriodId, processedTxns);
-    setShowImport(false);
-    setRawImportData('');
+    return processedTxns.length;
+  };
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // lets the same file be chosen again later
+    if (!file) return;
+
+    setUploading(true);
+    setUploadNotice(null);
+    try {
+      const text = await statementFileToTabText(file);
+      const count = handleImport(text);
+      if (count === 0) {
+        setUploadNotice({
+          type: 'error',
+          text: `No valid transactions found in "${file.name}". Each row needs at least 6 columns: Date, Sr.No., Details, Reward, Intl.Amount, Amount(in Rs).`,
+        });
+      } else {
+        setUploadNotice({ type: 'success', text: `"${file.name}" uploaded successfully — ${count} rows imported.` });
+        setShowImport(false);
+      }
+    } catch (error) {
+      setUploadNotice({ type: 'error', text: `Could not read "${file.name}": ${(error as Error).message}` });
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -423,15 +458,24 @@ export default function ReconciliationView({
           <h3 className="font-semibold text-slate-900 mb-4">Create Reconciliation Period</h3>
           <form onSubmit={handleCreatePeriod} className="flex gap-4 items-end">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Period Name</label>
-              <input 
-                type="text" 
-                placeholder="e.g. May 2026"
-                value={newPeriodName}
-                onChange={e => setNewPeriodName(e.target.value)}
-                className="w-64 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                required
-              />
+              <label className="block text-sm font-medium text-slate-700 mb-1">Month</label>
+              <select
+                value={newPeriodMonth}
+                onChange={e => { setNewPeriodMonth(Number(e.target.value)); setPeriodError(''); }}
+                className="w-40 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              >
+                {MONTH_NAMES.map((m, i) => <option key={m} value={i}>{m}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Year</label>
+              <select
+                value={newPeriodYear}
+                onChange={e => { setNewPeriodYear(Number(e.target.value)); setPeriodError(''); }}
+                className="w-28 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              >
+                {periodYears.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Card</label>
@@ -447,10 +491,11 @@ export default function ReconciliationView({
             <button type="submit" className="px-6 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors">
               Create
             </button>
-            <button type="button" onClick={() => setShowAddPeriod(false)} className="px-4 py-2 text-slate-600 hover:text-slate-800 font-medium">
+            <button type="button" onClick={() => { setShowAddPeriod(false); setPeriodError(''); }} className="px-4 py-2 text-slate-600 hover:text-slate-800 font-medium">
               Cancel
             </button>
           </form>
+          {periodError && <p role="alert" className="mt-3 text-sm font-medium text-red-700">{periodError}</p>}
         </div>
       )}
 
@@ -493,21 +538,46 @@ export default function ReconciliationView({
             </div>
           </div>
 
+          {uploadNotice && (
+            <div
+              role="status"
+              className={`flex items-start justify-between gap-3 px-6 py-3 border-b text-sm font-medium ${
+                uploadNotice.type === 'success'
+                  ? 'bg-green-50 text-green-800 border-green-200'
+                  : 'bg-red-50 text-red-800 border-red-200'
+              }`}
+            >
+              <span className="flex items-start gap-2">
+                {uploadNotice.type === 'success'
+                  ? <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+                  : <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />}
+                {uploadNotice.text}
+              </span>
+              <button onClick={() => setUploadNotice(null)} className="text-xs underline shrink-0">Dismiss</button>
+            </div>
+          )}
+
           {showImport && (
             <div className="p-6 border-b border-slate-200 bg-blue-50/30">
-              <h4 className="font-medium text-slate-900 mb-2">Paste Bank Statement Data</h4>
-              <p className="text-sm text-slate-500 mb-4">Copy and paste rows from Excel/CSV (Date, Sr.No., Details, Reward, Intl.Amount, Amount(in Rs))</p>
-              <textarea
-                value={rawImportData}
-                onChange={e => setRawImportData(e.target.value)}
-                className="w-full h-48 p-3 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="01/05/2026	13339439344	DIGITALOCEAN.COM AMSTERDAM NL*	29	31.36	3113.46..."
+              <h4 className="font-medium text-slate-900 mb-2">Upload Bank Statement</h4>
+              <p className="text-sm text-slate-500 mb-4">Select the statement file from your computer (.csv or .xlsx). Columns: Date, Sr.No., Details, Reward, Intl.Amount, Amount(in Rs)</p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.xlsx,.tsv,.txt"
+                onChange={handleFileSelected}
+                className="hidden"
               />
-              <div className="mt-4 flex gap-3">
-                <button onClick={handleImport} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-                  Process Data
+              <div className="flex gap-3">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
+                >
+                  <Upload className="w-4 h-4" />
+                  {uploading ? 'Uploading…' : 'Add File'}
                 </button>
-                <button onClick={() => setShowImport(false)} className="px-4 py-2 text-slate-600 hover:text-slate-800 text-sm font-medium">
+                <button onClick={() => setShowImport(false)} disabled={uploading} className="px-4 py-2 text-slate-600 hover:text-slate-800 text-sm font-medium">
                   Cancel
                 </button>
               </div>

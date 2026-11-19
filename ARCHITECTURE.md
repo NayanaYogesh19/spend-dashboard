@@ -58,9 +58,13 @@ The single source of truth in the browser. Views receive data as props and call 
 
 ## Database: `supabase/schema.sql`
 
-Eight tables: `requests`, `purchases`, `subscriptions`, `ad_spends`, `periods`, `bank_transactions`, `merchant_aliases`, `audit_logs`.
+Nine tables, one real column per field: `requests`, `request_events`, `purchases`, `subscriptions`, `ad_spends`, `periods`, `bank_transactions`, `merchant_aliases`, `audit_logs`.
 
-Each row is `id` + `data jsonb` (the full record from `types.ts`), plus `created_at` / `updated_at` and a few copied columns for filtering (`status`, `purchase_id`, `subscription_id`, `period_id`). Row Level Security is on with no policies, and the public roles have no table rights, so only the API's secret key can read or write.
+- `src/sync/mapping.ts` maps each app record (`types.ts`) to its columns and back, so the browser still works with the same record shapes. Anything that does not fit a column is kept in that table's `extra` jsonb column instead of being lost.
+- `request_events` is filled by the API: one row per status change of a request, with its time. A request's timestamps are also columns: `requested_at`, `decided_at` (approved or rejected), `otp_provided_at`.
+- `periods` stores a real `month` (first day of the month) plus `card`; the name "November 2026" is built from it.
+- Row Level Security is on with no policies, and the public roles have no table rights, so only the API's secret key can read or write.
+- Upgrading an old JSON-layout database: `supabase/migrate-to-columns.sql`, then `node scripts/migrate-data.mjs <backup.json>`.
 
 ## Main workflow
 

@@ -64,6 +64,7 @@ export interface PurchaseRequest {
   status: RequestStatus;
   managerName?: string;
   approvalTimestamp?: string;
+  otpProvidedAt?: string; // ISO time Finance provided the OTP
   createdAt: string;
   completionDetails?: PurchaseCompletionDetails;
 }

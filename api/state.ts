@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { COLLECTIONS, TABLE_NAMES, NEWEST_FIRST, Collection, SyncPayload, SyncRow, StateSnapshot } from '../src/sync/collections.js';
+import { COLLECTIONS, NEWEST_FIRST, Collection, SyncPayload, StateSnapshot } from '../src/sync/collections.js';
+import { SPECS, toRow, fromRow } from '../src/sync/mapping.js';
 
 // Runs on Vercel only. The secret key never reaches the browser.
 
@@ -12,31 +13,19 @@ function getClient(): SupabaseClient {
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-// Columns pulled out of `data` for filtering/sorting in the database.
-function extraColumns(collection: Collection, r: Record<string, any>): Record<string, unknown> {
-  switch (collection) {
-    case 'requests': return { status: r.status ?? null };
-    case 'purchases': return { purchase_id: r.purchaseId ?? null };
-    case 'subscriptions': return { subscription_id: r.subscriptionId ?? null, status: r.status ?? null };
-    case 'periods': return { status: r.status ?? null };
-    case 'bankTransactions': return { period_id: r.periodId ?? null, status: r.status ?? null };
-    default: return {};
-  }
-}
-
 async function readAll(db: SupabaseClient): Promise<StateSnapshot> {
   const state = {} as StateSnapshot;
   for (const collection of COLLECTIONS) {
     const rows: any[] = [];
     for (let from = 0; ; from += PAGE_SIZE) {
       const { data, error } = await db
-        .from(TABLE_NAMES[collection])
-        .select('data')
-        .order('created_at', { ascending: !NEWEST_FIRST[collection] })
+        .from(SPECS[collection].table)
+        .select('*')
+        .order(SPECS[collection].sortColumn, { ascending: !NEWEST_FIRST[collection] })
         .order('id')
         .range(from, from + PAGE_SIZE - 1);
       if (error) throw new Error(`${collection}: ${error.message}`);
-      rows.push(...data.map(row => row.data));
+      rows.push(...data.map(row => fromRow(collection, row)));
       if (data.length < PAGE_SIZE) break;
     }
     state[collection] = rows;
@@ -44,26 +33,56 @@ async function readAll(db: SupabaseClient): Promise<StateSnapshot> {
   return state;
 }
 
+// Records the time of each status change of a request (Submitted -> Approved -> ...).
+function statusEventTime(record: Record<string, any>, isNew: boolean, now: string): string {
+  if (isNew) return record.createdAt ?? now;
+  if (record.status === 'Approved' || record.status === 'Rejected') return record.approvalTimestamp ?? now;
+  if (record.status === 'Awaiting Purchase Completion' || record.status === 'OTP Verified') return record.otpProvidedAt ?? now;
+  return now;
+}
+
 async function write(db: SupabaseClient, payload: SyncPayload) {
   const now = new Date().toISOString();
   for (const collection of COLLECTIONS) {
     const rows = payload[collection];
     if (!rows?.length) continue;
+    const spec = SPECS[collection];
 
-    const toRow = ({ record, createdAt }: SyncRow) => ({
-      id: record.id,
-      data: record,
-      ...extraColumns(collection, record),
-      ...(collection === 'auditLogs' ? {} : { updated_at: now }),
-      ...(createdAt ? { created_at: createdAt } : {}),
+    // For requests, remember the stored status so status changes can be logged after saving.
+    let previousStatus = new Map<string, string>();
+    if (collection === 'requests') {
+      const { data, error } = await db.from(spec.table).select('id,status').in('id', rows.map(r => r.record.id));
+      if (error) throw new Error(`${collection}: ${error.message}`);
+      previousStatus = new Map(data.map((r: any) => [r.id, r.status]));
+    }
+
+    const build = ({ record, createdAt }: typeof rows[number]) => ({
+      ...toRow(collection, record, createdAt),
+      ...(spec.hasUpdatedAt ? { updated_at: now } : {}),
     });
 
     // Upsert new and existing rows separately: in one batch, rows without
     // created_at would have it set to null instead of keeping the stored value.
     for (const batch of [rows.filter(r => r.createdAt), rows.filter(r => !r.createdAt)]) {
       if (!batch.length) continue;
-      const { error } = await db.from(TABLE_NAMES[collection]).upsert(batch.map(toRow), { onConflict: 'id' });
+      const { error } = await db.from(spec.table).upsert(batch.map(build), { onConflict: 'id' });
       if (error) throw new Error(`${collection}: ${error.message}`);
+    }
+
+    if (collection === 'requests') {
+      const events = rows
+        .filter(({ record }) => previousStatus.get(record.id) !== record.status)
+        .map(({ record }) => ({
+          request_id: record.id,
+          from_status: previousStatus.get(record.id) ?? null,
+          to_status: record.status,
+          occurred_at: statusEventTime(record, !previousStatus.has(record.id), now),
+        }));
+      if (events.length) {
+        const { error } = await db.from('request_events').insert(events);
+        // The history is secondary: never fail a save that already succeeded.
+        if (error) console.error(`request_events: ${error.message}`);
+      }
     }
   }
 }
@@ -92,7 +111,7 @@ export async function DELETE(request: Request) {
   }
 
   try {
-    const { data, error } = await getClient().from(TABLE_NAMES.periods).delete().in('id', ids).select('id');
+    const { data, error } = await getClient().from(SPECS.periods.table).delete().in('id', ids).select('id');
     if (error) throw new Error(`periods: ${error.message}`);
     return Response.json({ ok: true, deleted: data.length });
   } catch (error) {

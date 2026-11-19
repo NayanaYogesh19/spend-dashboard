@@ -12,11 +12,15 @@ interface EmployeeViewProps {
 
 // OTP is shared by Finance outside the app, so the requester can confirm as soon as the request is approved.
 const CONFIRMABLE_STATUSES = ['Approved', 'Awaiting Purchase Completion'];
-const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD'];
+const formatDateTime = (iso?: string) =>
+  iso ? new Date(iso).toLocaleString(undefined, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+const CURRENCIES =['INR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD'];
 const CURRENCY_SYMBOLS: Record<string, string> = { INR: '₹', USD: '$', EUR: '€', GBP: '£', AUD: 'A$', CAD: 'C$' };
 
 export default function EmployeeView({ requests, onAddRequest, onCompletePurchase }: EmployeeViewProps) {
   const [view, setView] = useState<'list' | 'new'>('list');
+  const [viewReqId, setViewReqId] = useState<string | null>(null);
+  const viewedReq = requests.find(r => r.id === viewReqId);
 
   // Form State
   const [requesterName, setRequesterName] = useState('');
@@ -295,7 +299,7 @@ export default function EmployeeView({ requests, onAddRequest, onCompletePurchas
                   <th scope="col" className="px-6 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Amount</th>
                   <th scope="col" className="px-6 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Type</th>
                   <th scope="col" className="px-6 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</th>
-                  <th scope="col" className="px-6 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date</th>
+                  <th scope="col" className="px-6 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date &amp; Time (OTP Provided)</th>
                   <th scope="col" className="px-6 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
@@ -319,19 +323,99 @@ export default function EmployeeView({ requests, onAddRequest, onCompletePurchas
                       {getStatusBadge(req.status)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-500 font-medium">
-                      {new Date(req.createdAt).toLocaleDateString()}
+                      {req.otpProvidedAt
+                        ? new Date(req.otpProvidedAt).toLocaleString(undefined, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                        : '—'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs">
-                      {CONFIRMABLE_STATUSES.includes(req.status) && (
-                        <button onClick={() => openCompletionForm(req)} className="px-3 py-1.5 bg-emerald-600 text-white font-semibold rounded hover:bg-emerald-700 transition-colors shadow-sm">
-                          Confirm
+                      <div className="flex items-center gap-2">
+                        {CONFIRMABLE_STATUSES.includes(req.status) && (
+                          <button onClick={() => openCompletionForm(req)} className="px-3 py-1.5 bg-emerald-600 text-white font-semibold rounded hover:bg-emerald-700 transition-colors shadow-sm">
+                            Confirm
+                          </button>
+                        )}
+                        <button onClick={() => setViewReqId(req.id)} className="px-3 py-1.5 bg-white text-blue-700 border border-blue-200 font-semibold rounded hover:bg-blue-50 transition-colors">
+                          View
                         </button>
-                      )}
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {viewedReq && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setViewReqId(null)}>
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">{viewedReq.toolVendor}</h3>
+                <p className="text-xs text-slate-500 font-mono">{viewedReq.purchaseId || 'Purchase ID pending approval'}</p>
+              </div>
+              <button onClick={() => setViewReqId(null)} className="text-slate-400 hover:text-slate-600 text-xl leading-none" aria-label="Close">&times;</button>
+            </div>
+            <div className="p-6 space-y-5 text-sm">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+                {([
+                  ['Status', viewedReq.status],
+                  ['Amount', `${viewedReq.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${viewedReq.currency}`],
+                  ['Type', viewedReq.purchaseType],
+                  ['Expense', `${viewedReq.expenseType}${viewedReq.clientName ? ` · ${viewedReq.clientName}` : ''}`],
+                  ['Requested by', viewedReq.requesterName],
+                  ['Manager', viewedReq.managerName || '—'],
+                  ['Pod', viewedReq.pod],
+                  ['Category', viewedReq.expenseCategory],
+                ] as [string, string][]).map(([label, value]) => (
+                  <div key={label}>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">{label}</div>
+                    <div className="text-slate-800 font-medium">{value || '—'}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-2">Timeline</div>
+                <ul className="space-y-2 border-l-2 border-slate-200 pl-4">
+                  {([
+                    ['Requested', formatDateTime(viewedReq.createdAt)],
+                    ['Approved', formatDateTime(viewedReq.approvalTimestamp)],
+                    ['OTP provided', formatDateTime(viewedReq.otpProvidedAt)],
+                    ['Purchase date', viewedReq.completionDetails?.actualPurchaseDate
+                      ? new Date(viewedReq.completionDetails.actualPurchaseDate).toLocaleDateString()
+                      : '—'],
+                  ] as [string, string][]).map(([label, value]) => (
+                    <li key={label} className="flex justify-between gap-4">
+                      <span className="text-slate-500">{label}</span>
+                      <span className="text-slate-800 font-medium">{value}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {viewedReq.completionDetails && (
+                <div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-2">Purchase confirmation</div>
+                  <ul className="space-y-1">
+                    <li className="flex justify-between gap-4"><span className="text-slate-500">Result</span><span className="text-slate-800 font-medium">{viewedReq.completionDetails.purchaseStatus}</span></li>
+                    <li className="flex justify-between gap-4"><span className="text-slate-500">Vendor amount</span><span className="text-slate-800 font-medium">{viewedReq.completionDetails.actualVendorAmount} {viewedReq.completionDetails.actualCurrency}</span></li>
+                    {viewedReq.completionDetails.actualBankInrAmount !== undefined && (
+                      <li className="flex justify-between gap-4"><span className="text-slate-500">Charged on card (INR)</span><span className="text-slate-800 font-medium">{viewedReq.completionDetails.actualBankInrAmount}</span></li>
+                    )}
+                    <li className="flex justify-between gap-4"><span className="text-slate-500">Bank verification</span><span className="text-slate-800 font-medium">{viewedReq.completionDetails.bankVerificationStatus || '—'}</span></li>
+                  </ul>
+                </div>
+              )}
+
+              {viewedReq.notes && (
+                <div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">Notes</div>
+                  <p className="text-slate-700">{viewedReq.notes}</p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
