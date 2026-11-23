@@ -158,6 +158,9 @@ export const SPECS: Record<Collection, TableSpec> = {
       ['bankVerificationStatus', 'bank_verification_status', 'text'],
       ['notes', 'notes', 'text'],
       ['source', 'source', 'text'],
+      ['activatedAt', 'activated_at', 'timestamp'],
+      ['pausedAt', 'paused_at', 'timestamp'],
+      ['cancelledAt', 'cancelled_at', 'timestamp'],
     ],
   },
 

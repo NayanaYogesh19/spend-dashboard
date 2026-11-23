@@ -136,6 +136,9 @@ create table if not exists subscriptions (
   bank_verification_status   text,
   notes                      text,
   source                     text,                  -- Approved Request / Imported / Bank Statement
+  activated_at               timestamptz,           -- last time set Active (or resumed)
+  paused_at                  timestamptz,           -- last time paused
+  cancelled_at               timestamptz,           -- last time cancelled
   created_at                 timestamptz not null default now(),
   updated_at                 timestamptz not null default now(),
   extra                      jsonb not null default '{}'

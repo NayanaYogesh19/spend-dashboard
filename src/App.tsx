@@ -11,7 +11,7 @@ import { CreditCard, Users, ShieldCheck, Wallet, Database, FileSpreadsheet, BarC
 type Role = 'Employee' | 'Manager' | 'Finance' | 'Registers' | 'Reconciliation' | 'Dashboard';
 
 export default function App() {
-  const { syncStatus, syncError, legacyData, importLegacyData, dismissLegacyData, requests, purchases, subscriptions, adSpends, periods, bankTransactions, merchantAliases, auditLogs, addRequest, updateRequestStatus, processPurchase, processSubscription, processAdSpend, completePurchase, updateBankAmount, addReconciliationPeriod, importBankTransactions, updateBankTransaction, confirmTransactionMatch, resolveUnidentifiedTransaction, addImportedSubscription, updateSubscription, addMerchantAlias, closePeriod, deletePeriod, toggleFeeBillable } = useStore();
+  const { syncStatus, syncError, legacyData, importLegacyData, dismissLegacyData, requests, purchases, subscriptions, adSpends, periods, bankTransactions, merchantAliases, auditLogs, addRequest, updateRequestStatus, processPurchase, processSubscription, processAdSpend, completePurchase, updateBankAmount, addReconciliationPeriod, importBankTransactions, updateBankTransaction, confirmTransactionMatch, resolveUnidentifiedTransaction, addImportedSubscription, addAdSpend, updateSubscription, addMerchantAlias, closePeriod, deletePeriod, toggleFeeBillable } = useStore();
   const [activeRole, setActiveRole] = useState<Role>('Dashboard');
 
   const navItems: { role: Role; icon: React.ReactNode; label: string; desc: string }[] = [
@@ -115,6 +115,7 @@ export default function App() {
             subscriptions={subscriptions}
             adSpends={adSpends}
             onAddImportedSubscription={addImportedSubscription}
+            onAddAdSpend={addAdSpend}
             onUpdateSubscription={updateSubscription}
           />}
           {activeRole === 'Dashboard' && <DashboardView 

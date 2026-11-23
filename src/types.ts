@@ -128,6 +128,10 @@ export interface SubscriptionRecord {
   bankVerificationStatus?: 'Pending' | 'Finance Confirmed' | 'Statement Confirmed';
   notes?: string;
   source?: SubscriptionSource; // 'Approved Request' (default when absent) or 'Imported'
+  // ISO times of the most recent status changes
+  activatedAt?: string; // last time it was set Active (or resumed)
+  pausedAt?: string;    // last time it was paused
+  cancelledAt?: string; // last time it was cancelled
 }
 
 // Input for onboarding a subscription that was already running before Spendy existed.
@@ -166,6 +170,23 @@ export interface AdSpendRecord {
   notes?: string;
   actualBankInrAmount?: number;
   bankVerificationStatus?: 'Pending' | 'Finance Confirmed' | 'Statement Confirmed';
+}
+
+// Details Finance enters to record an ad spend by hand (e.g. LinkedIn, which has no API feed).
+export interface AdSpendInput {
+  platform: string;
+  client: string;
+  adAccountName?: string;
+  adAccountId?: string;
+  pod: string;
+  employeeOwner: string;
+  billingPeriod: string; // e.g. November 2026
+  approvedMonthlyBudget: number;
+  platformSpend: number;
+  cardAmountCharged: number;
+  currency: string;
+  evidenceType: EvidenceType;
+  notes?: string;
 }
 
 export interface MerchantAlias {
@@ -257,6 +278,7 @@ export interface AppState {
   updateBankTransaction: (id: string, updates: Partial<BankTransaction>) => void;
   confirmTransactionMatch: (transactionId: string) => void;
   addImportedSubscription: (input: ImportedSubscriptionInput) => void;
+  addAdSpend: (input: AdSpendInput) => void;
   updateSubscription: (id: string, updates: Partial<SubscriptionRecord>) => void;
   addMerchantAlias: (alias: Omit<MerchantAlias, 'id'>) => void;
   closePeriod: (periodId: string, reason: string, user: string) => void;

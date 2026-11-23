@@ -313,8 +313,56 @@ export default function DashboardView({
                     </div>
                   </div>
                 ))}
+                {activeSubs.filter(s => !s.pod).map(s => (
+                  <div key={`alert-pod-${s.subscriptionId}`} className="p-4 flex gap-3 items-start bg-yellow-50/30">
+                    <AlertCircle className="w-5 h-5 text-yellow-500 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-sm font-medium text-slate-900">Subscription missing Pod</div>
+                      <div className="text-xs text-slate-500 mt-1">{s.subscriptionId} ({s.vendor}) has no pod, so its cost cannot be attributed.</div>
+                    </div>
+                  </div>
+                ))}
+                {adSpends.filter(a => !a.client || !a.pod).map(a => (
+                  <div key={`alert-ad-${a.id}`} className="p-4 flex gap-3 items-start bg-yellow-50/30">
+                    <AlertCircle className="w-5 h-5 text-yellow-500 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-sm font-medium text-slate-900">Ad Spend missing {!a.client ? 'Client' : 'Pod'}</div>
+                      <div className="text-xs text-slate-500 mt-1">{a.platform} ({a.billingPeriod || 'no period'}) has no {!a.client ? 'client' : 'pod'} assigned.</div>
+                    </div>
+                  </div>
+                ))}
+                {selectedPeriod && unidentifiedCount > 0 && (
+                  <div className="p-4 flex gap-3 items-start bg-red-50/30">
+                    <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-sm font-medium text-slate-900">Unmatched card transactions</div>
+                      <div className="text-xs text-slate-500 mt-1">{unidentifiedCount} transaction{unidentifiedCount === 1 ? '' : 's'} in {selectedPeriod.name} ({selectedPeriod.card}) could not be matched to a purchase or subscription.</div>
+                    </div>
+                  </div>
+                )}
+                {selectedPeriod && periodTxns.filter(t => t.type === 'Merchant' && (t.status === 'Matched' || t.status === 'Review') && !t.suggestedPod).length > 0 && (
+                  <div className="p-4 flex gap-3 items-start bg-yellow-50/30">
+                    <AlertCircle className="w-5 h-5 text-yellow-500 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-sm font-medium text-slate-900">Matched transactions without a Pod</div>
+                      <div className="text-xs text-slate-500 mt-1">{periodTxns.filter(t => t.type === 'Merchant' && (t.status === 'Matched' || t.status === 'Review') && !t.suggestedPod).length} matched transaction(s) in {selectedPeriod.name} have no pod, so they appear as "not matched" in Spend by Pod.</div>
+                    </div>
+                  </div>
+                )}
+                {selectedPeriod && periodTxns.filter(t => t.type === 'Merchant' && t.status === 'Matched' && selectedPeriod.card === 'Client Card' && !t.suggestedClient).length > 0 && (
+                  <div className="p-4 flex gap-3 items-start bg-yellow-50/30">
+                    <AlertCircle className="w-5 h-5 text-yellow-500 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-sm font-medium text-slate-900">Client card transactions without a Client</div>
+                      <div className="text-xs text-slate-500 mt-1">Some matched transactions in {selectedPeriod.name} are on the Client Card but have no client to bill.</div>
+                    </div>
+                  </div>
+                )}
                 <div className="p-6 text-center text-slate-500 text-sm italic">
-                  No further anomalies detected.
+                  {activeSubs.some(s => (s.billable && !s.client) || !s.employeeOwner || !s.pod) || adSpends.some(a => !a.client || !a.pod)
+                    || (selectedPeriod && periodTxns.some(t => t.status === 'Unidentified'))
+                    ? 'Resolve the items above to clear these alerts.'
+                    : 'No anomalies detected.'}
                 </div>
               </div>
             </div>

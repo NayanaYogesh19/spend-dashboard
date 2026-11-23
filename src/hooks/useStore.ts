@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { PurchaseRequest, RequestStatus, PurchaseRecord, SubscriptionRecord, AdSpendRecord, ReconciliationPeriod, BankTransaction, MerchantAlias, CardType, AuditLog, PurchaseCompletionDetails, ImportedSubscriptionInput, ManualResolutionInput } from '../types';
+import { PurchaseRequest, RequestStatus, PurchaseRecord, SubscriptionRecord, AdSpendRecord, ReconciliationPeriod, BankTransaction, MerchantAlias, CardType, AuditLog, PurchaseCompletionDetails, ImportedSubscriptionInput, ManualResolutionInput, SubscriptionStatus, AdSpendInput } from '../types';
 import { parseBankDate, parseISODate, toISODate, addBillingCycle } from '../utils/recurringMatch';
 import { COLLECTIONS, NEWEST_FIRST, Collection, SyncPayload, stableStringify } from '../sync/collections';
 
@@ -618,17 +618,61 @@ export function useStore() {
       nextExpectedCharge: input.nextExpectedCharge,
       status: input.status,
       notes: input.notes || undefined,
-      source: 'Imported'
+      source: 'Imported',
+      ...statusTime(input.status, new Date().toISOString())
     };
 
     setData(prev => ({ ...prev, subscriptions: [record, ...prev.subscriptions] }));
   };
 
+  // Records when a subscription is set Active / Paused / Cancelled.
+  const statusTime = (status: SubscriptionStatus, at: string): Partial<SubscriptionRecord> =>
+    status === 'Paused' ? { pausedAt: at } : status === 'Cancelled' ? { cancelledAt: at } : { activatedAt: at };
+
   const updateSubscription = (id: string, updates: Partial<SubscriptionRecord>) => {
-    setData(prev => ({
-      ...prev,
-      subscriptions: prev.subscriptions.map(s => (s.id === id ? { ...s, ...updates } : s))
-    }));
+    setData(prev => {
+      const current = prev.subscriptions.find(s => s.id === id);
+      if (!current) return prev;
+      const now = new Date().toISOString();
+      const statusChanged = updates.status !== undefined && updates.status !== current.status;
+      return {
+        ...prev,
+        subscriptions: prev.subscriptions.map(s => (s.id === id
+          ? { ...s, ...updates, ...(statusChanged ? statusTime(updates.status!, now) : {}) }
+          : s)),
+        auditLogs: statusChanged ? [{
+          id: crypto.randomUUID(),
+          timestamp: now,
+          user: 'Finance Admin',
+          action: 'Subscription Status Changed',
+          entityId: current.subscriptionId,
+          previousValue: current.status,
+          newValue: updates.status
+        }, ...prev.auditLogs] : prev.auditLogs
+      };
+    });
+  };
+
+  // Records an ad spend by hand (no originating purchase request).
+  const addAdSpend = (input: AdSpendInput) => {
+    const record: AdSpendRecord = {
+      id: crypto.randomUUID(),
+      originalPurchaseId: '',
+      client: input.client,
+      platform: input.platform,
+      adAccountName: input.adAccountName || '',
+      adAccountId: input.adAccountId || '',
+      pod: input.pod,
+      employeeOwner: input.employeeOwner,
+      billingPeriod: input.billingPeriod,
+      approvedMonthlyBudget: input.approvedMonthlyBudget,
+      platformSpend: input.platformSpend,
+      cardAmountCharged: input.cardAmountCharged,
+      currency: input.currency,
+      evidenceType: input.evidenceType,
+      notes: input.notes || undefined
+    };
+    setData(prev => ({ ...prev, adSpends: [record, ...prev.adSpends] }));
   };
 
   const addMerchantAlias = (alias: Omit<MerchantAlias, 'id'>) => {
@@ -724,6 +768,7 @@ export function useStore() {
     confirmTransactionMatch,
     resolveUnidentifiedTransaction,
     addImportedSubscription,
+    addAdSpend,
     updateSubscription,
     addMerchantAlias,
     deletePeriod,

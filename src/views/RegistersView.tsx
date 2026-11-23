@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
-import { PurchaseRecord, SubscriptionRecord, AdSpendRecord, ImportedSubscriptionInput, SubscriptionFrequency, CardType, SubscriptionStatus } from '../types';
-import { Database, RotateCw, Megaphone, FileText, Download, PlusCircle, Eye, Pencil, Ban } from 'lucide-react';
+import { PurchaseRecord, SubscriptionRecord, AdSpendRecord, AdSpendInput, EvidenceType, ImportedSubscriptionInput, SubscriptionFrequency, CardType, SubscriptionStatus } from '../types';
+import { Database, RotateCw, Megaphone, FileText, Download, PlusCircle, Eye, Pencil, Ban, Pause, Play } from 'lucide-react';
 
 interface RegistersViewProps {
   purchases: PurchaseRecord[];
   subscriptions: SubscriptionRecord[];
   adSpends: AdSpendRecord[];
   onAddImportedSubscription: (input: ImportedSubscriptionInput) => void;
+  onAddAdSpend: (input: AdSpendInput) => void;
   onUpdateSubscription: (id: string, updates: Partial<SubscriptionRecord>) => void;
 }
 
@@ -25,6 +26,159 @@ function formatDate(dateStr?: string): string {
   const d = new Date(`${dateStr}T00:00:00`);
   if (isNaN(d.getTime())) return dateStr;
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function formatDateTime(iso?: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+// "Paused 20 Nov 2026, 10:32" for the current status of a subscription.
+function statusSince(s: SubscriptionRecord): string | null {
+  const at = s.status === 'Paused' ? s.pausedAt : s.status === 'Cancelled' ? s.cancelledAt : s.activatedAt;
+  return at ? `${s.status === 'Active' ? 'Active since' : s.status} ${formatDateTime(at)}` : null;
+}
+
+const AD_PLATFORMS = ['Google Ads', 'Facebook Ads', 'LinkedIn Ads', 'Other'];
+const EVIDENCE_TYPES: EvidenceType[] = ['CSV', 'Invoice', 'Screenshot', 'None'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const INPUT_CLASS = 'w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg shadow-inner focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium text-slate-800';
+const LABEL_CLASS = 'block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1';
+
+function AdSpendModal({ onClose, onSave }: { onClose: () => void; onSave: (data: AdSpendInput) => void }) {
+  const now = new Date();
+  const [platform, setPlatform] = useState(AD_PLATFORMS[2]);
+  const [otherPlatform, setOtherPlatform] = useState('');
+  const [client, setClient] = useState('');
+  const [adAccountName, setAdAccountName] = useState('');
+  const [adAccountId, setAdAccountId] = useState('');
+  const [pod, setPod] = useState('');
+  const [owner, setOwner] = useState('');
+  const [month, setMonth] = useState(now.getMonth());
+  const [year, setYear] = useState(now.getFullYear());
+  const [budget, setBudget] = useState('');
+  const [platformSpend, setPlatformSpend] = useState('');
+  const [cardCharged, setCardCharged] = useState('');
+  const [currency, setCurrency] = useState('INR');
+  const [evidenceType, setEvidenceType] = useState<EvidenceType>('None');
+  const [notes, setNotes] = useState('');
+  const years = Array.from({ length: 7 }, (_, i) => now.getFullYear() - 3 + i);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const platformName = platform === 'Other' ? otherPlatform.trim() : platform;
+    if (!platformName) return;
+    onSave({
+      platform: platformName,
+      client: client.trim(),
+      adAccountName: adAccountName.trim() || undefined,
+      adAccountId: adAccountId.trim() || undefined,
+      pod: pod.trim(),
+      employeeOwner: owner.trim(),
+      billingPeriod: `${MONTH_NAMES[month]} ${year}`,
+      approvedMonthlyBudget: parseFloat(budget) || 0,
+      platformSpend: parseFloat(platformSpend) || 0,
+      cardAmountCharged: parseFloat(cardCharged) || 0,
+      currency,
+      evidenceType,
+      notes: notes.trim() || undefined,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-2xl rounded-2xl shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
+        <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-start">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800">Add Ad Spend</h3>
+            <p className="text-xs text-slate-500 mt-0.5 max-w-lg">Record a month of ad spend by hand, for example from LinkedIn Ads where there is no data feed.</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className={LABEL_CLASS}>Platform *</label>
+              <select value={platform} onChange={e => setPlatform(e.target.value)} className={INPUT_CLASS}>
+                {AD_PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            {platform === 'Other' ? (
+              <div>
+                <label className={LABEL_CLASS}>Platform Name *</label>
+                <input required type="text" value={otherPlatform} onChange={e => setOtherPlatform(e.target.value)} placeholder="e.g. Reddit Ads" className={INPUT_CLASS} />
+              </div>
+            ) : <div className="hidden md:block" />}
+            <div>
+              <label className={LABEL_CLASS}>Client *</label>
+              <input required type="text" value={client} onChange={e => setClient(e.target.value)} placeholder="Client the spend is for (or Internal)" className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Pod *</label>
+              <input required type="text" value={pod} onChange={e => setPod(e.target.value)} placeholder="e.g. Growth" className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Owner *</label>
+              <input required type="text" value={owner} onChange={e => setOwner(e.target.value)} placeholder="Person responsible" className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Billing Period (Month / Year) *</label>
+              <div className="flex gap-2">
+                <select value={month} onChange={e => setMonth(Number(e.target.value))} className={INPUT_CLASS}>
+                  {MONTH_NAMES.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                </select>
+                <select value={year} onChange={e => setYear(Number(e.target.value))} className={INPUT_CLASS}>
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Ad Account Name</label>
+              <input type="text" value={adAccountName} onChange={e => setAdAccountName(e.target.value)} className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Ad Account ID</label>
+              <input type="text" value={adAccountId} onChange={e => setAdAccountId(e.target.value)} className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Currency *</label>
+              <select value={currency} onChange={e => setCurrency(e.target.value)} className={INPUT_CLASS}>
+                {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Approved Monthly Budget</label>
+              <input type="number" step="0.01" min="0" value={budget} onChange={e => setBudget(e.target.value)} placeholder="0.00" className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Platform Spend *</label>
+              <input required type="number" step="0.01" min="0" value={platformSpend} onChange={e => setPlatformSpend(e.target.value)} placeholder="0.00" className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Charged on Card *</label>
+              <input required type="number" step="0.01" min="0" value={cardCharged} onChange={e => setCardCharged(e.target.value)} placeholder="0.00" className={INPUT_CLASS} />
+            </div>
+            <div className="md:col-span-2">
+              <label className={LABEL_CLASS}>Evidence Type</label>
+              <select value={evidenceType} onChange={e => setEvidenceType(e.target.value as EvidenceType)} className={INPUT_CLASS}>
+                {EVIDENCE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className={LABEL_CLASS}>Notes</label>
+              <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className={INPUT_CLASS} />
+            </div>
+          </div>
+          <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-100">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 shadow-sm transition-colors">Cancel</button>
+            <button type="submit" className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm transition-colors">Add Ad Spend</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 interface SubscriptionModalProps {
@@ -156,6 +310,17 @@ function SubscriptionModal({ mode, initial, onClose, onSave }: SubscriptionModal
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight mb-1">Notes</label>
               <textarea disabled={readOnly} value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Any context finance should know about this subscription." className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg shadow-inner focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium text-slate-800 disabled:opacity-70" />
             </div>
+
+            {initial && (
+              <div className="md:col-span-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                <p className={LABEL_CLASS}>Status History</p>
+                <ul className="text-xs text-slate-700 space-y-1">
+                  <li className="flex justify-between"><span className="text-slate-500">Last set Active</span><span className="font-medium">{formatDateTime(initial.activatedAt)}</span></li>
+                  <li className="flex justify-between"><span className="text-slate-500">Last paused</span><span className="font-medium">{formatDateTime(initial.pausedAt)}</span></li>
+                  <li className="flex justify-between"><span className="text-slate-500">Last cancelled</span><span className="font-medium">{formatDateTime(initial.cancelledAt)}</span></li>
+                </ul>
+              </div>
+            )}
           </div>
 
           <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-100">
@@ -174,9 +339,10 @@ function SubscriptionModal({ mode, initial, onClose, onSave }: SubscriptionModal
   );
 }
 
-export default function RegistersView({ purchases, subscriptions, adSpends, onAddImportedSubscription, onUpdateSubscription }: RegistersViewProps) {
+export default function RegistersView({ purchases, subscriptions, adSpends, onAddImportedSubscription, onAddAdSpend, onUpdateSubscription }: RegistersViewProps) {
   const [activeTab, setActiveTab] = useState<'purchases' | 'subscriptions' | 'adSpends'>('purchases');
   const [modal, setModal] = useState<{ mode: 'add' | 'edit' | 'view'; sub?: SubscriptionRecord } | null>(null);
+  const [showAdSpendModal, setShowAdSpendModal] = useState(false);
 
   const handleSaveSubscription = (data: ImportedSubscriptionInput) => {
     if (modal?.mode === 'edit' && modal.sub) {
@@ -203,9 +369,24 @@ export default function RegistersView({ purchases, subscriptions, adSpends, onAd
   };
 
   const handleDeactivate = (sub: SubscriptionRecord) => {
-    if (window.confirm(`Deactivate ${sub.vendor} (${sub.subscriptionId})? Its status will be set to Cancelled.`)) {
+    if (window.confirm(`Cancel ${sub.vendor} (${sub.subscriptionId})? Its status will be set to Cancelled.`)) {
       onUpdateSubscription(sub.id, { status: 'Cancelled' });
     }
+  };
+
+  const handlePause = (sub: SubscriptionRecord) => {
+    if (window.confirm(`Pause ${sub.vendor} (${sub.subscriptionId})? You can resume it later.`)) {
+      onUpdateSubscription(sub.id, { status: 'Paused' });
+    }
+  };
+
+  const handleResume = (sub: SubscriptionRecord) => {
+    onUpdateSubscription(sub.id, { status: 'Active' });
+  };
+
+  const handleSaveAdSpend = (data: AdSpendInput) => {
+    onAddAdSpend(data);
+    setShowAdSpendModal(false);
   };
 
   return (
@@ -272,6 +453,21 @@ export default function RegistersView({ purchases, subscriptions, adSpends, onAd
               <PlusCircle className="w-4 h-4" /> Add Existing Subscription
             </button>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'adSpends' && (
+        <div className="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 shadow-sm mb-6">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Manual Ad Spend Entry</p>
+            <p className="text-xs text-slate-500 mt-0.5">Record ad spend by hand, for example LinkedIn Ads, which has no data feed.</p>
+          </div>
+          <button
+            onClick={() => setShowAdSpendModal(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-sm shrink-0"
+          >
+            <PlusCircle className="w-4 h-4" /> Add Ad Spend
+          </button>
         </div>
       )}
 
@@ -381,14 +577,21 @@ export default function RegistersView({ purchases, subscriptions, adSpends, onAd
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest ${s.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-700'}`}>{s.status}</span>
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest ${s.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : s.status === 'Paused' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-700'}`}>{s.status}</span>
+                      {statusSince(s) && <div className="text-[10px] text-slate-400 mt-1">{statusSince(s)}</div>}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-3 text-slate-400">
                         <button onClick={() => setModal({ mode: 'view', sub: s })} title="View" className="hover:text-blue-600 transition-colors"><Eye className="w-4 h-4" /></button>
                         <button onClick={() => setModal({ mode: 'edit', sub: s })} title="Edit" className="hover:text-blue-600 transition-colors"><Pencil className="w-4 h-4" /></button>
+                        {s.status === 'Active' && (
+                          <button onClick={() => handlePause(s)} title="Pause" className="hover:text-amber-600 transition-colors"><Pause className="w-4 h-4" /></button>
+                        )}
+                        {s.status === 'Paused' && (
+                          <button onClick={() => handleResume(s)} title="Resume (set Active)" className="hover:text-emerald-600 transition-colors"><Play className="w-4 h-4" /></button>
+                        )}
                         {s.status !== 'Cancelled' && (
-                          <button onClick={() => handleDeactivate(s)} title="Deactivate" className="hover:text-red-600 transition-colors"><Ban className="w-4 h-4" /></button>
+                          <button onClick={() => handleDeactivate(s)} title="Cancel subscription" className="hover:text-red-600 transition-colors"><Ban className="w-4 h-4" /></button>
                         )}
                       </div>
                     </td>
@@ -444,6 +647,8 @@ export default function RegistersView({ purchases, subscriptions, adSpends, onAd
         )}
 
       </div>
+
+      {showAdSpendModal && <AdSpendModal onClose={() => setShowAdSpendModal(false)} onSave={handleSaveAdSpend} />}
 
       {modal && (
         <SubscriptionModal

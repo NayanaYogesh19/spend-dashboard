@@ -12,6 +12,9 @@ bank-statement reconciliation. Data is stored in Supabase (Postgres).
 - Reconciliation periods created by Month / Year (e.g. November 2026)
 - Bank statement import by file upload (`.csv`, `.xlsx`, `.tsv`, `.txt`)
 - Reconciliation CSV download
+- Subscription register with **Pause**, **Resume** and **Cancel**; the time of each status change is recorded and shown
+- **Manual ad-spend entry** (Google, Facebook, LinkedIn or other platforms) in the Ad Spend register
+- Dashboard alerts for missing client or pod, and for unmatched card transactions
 
 ## Requirements
 
@@ -51,6 +54,11 @@ Nine tables, one real column per field: `periods`, `requests`, `request_events`,
 `subscriptions`, `ad_spends`, `bank_transactions`, `merchant_aliases`, `audit_logs`.
 Row Level Security is on with no policies, so the browser can't read or write data; only the
 server-side API using the secret key can. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
+
+Databases created before the subscription status times were added need one extra step: run
+[`supabase/add-subscription-status-times.sql`](supabase/add-subscription-status-times.sql) once in the
+Supabase SQL Editor (adds `activated_at`, `paused_at`, `cancelled_at` to `subscriptions`). Fresh installs
+get these columns from `schema.sql`.
 
 If you have data in the older JSON-style tables, run
 [`supabase/migrate-to-columns.sql`](supabase/migrate-to-columns.sql) and then
